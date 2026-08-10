@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+/* Tailwind v4 defaults to prefers-color-scheme for `dark:`. We use a class
+   strategy instead so the three-state (light/dark/system) toggle in
+   ThemeProvider can force either theme regardless of OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-sans);
+}
+
+/*
+ * Design tokens.
+ *
+ * Neutrals are biased slightly cool/toward-teal rather than pure gray, to
+ * read as chosen rather than default, and to sit comfortably next to the
+ * primary accent. Font stack is the native system-ui stack, deliberately:
+ * this is a self-hosted daily-driver tool, not a marketing page, and a
+ * system font avoids a webfont fetch on every load of an app people may
+ * open dozens of times a day.
+ */
+:root {
+  --background: #f6f7f9;
+  --foreground: #14181f;
+  --card: #ffffff;
+  --card-foreground: #14181f;
+  --border: #e2e5ea;
+  --muted: #eef0f3;
+  --muted-foreground: #6b7280;
+  --primary: #0e9c93;
+  --primary-foreground: #ffffff;
+  --destructive: #c0362c;
+  --destructive-foreground: #ffffff;
+  --ring: color-mix(in oklab, var(--primary) 50%, transparent);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* OS-level dark preference applies unless the user explicitly chose light. */
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: #0f1417;
+    --foreground: #e7eaee;
+    --card: #171d21;
+    --card-foreground: #e7eaee;
+    --border: #262e33;
+    --muted: #1d2327;
+    --muted-foreground: #929ca6;
+    --primary: #2dd4c7;
+    --primary-foreground: #06201d;
+    --destructive: #e5675c;
+    --destructive-foreground: #250705;
+  }
+}
+
+/* Explicit user choice always wins, in both directions. */
+.dark {
+  --background: #0f1417;
+  --foreground: #e7eaee;
+  --card: #171d21;
+  --card-foreground: #e7eaee;
+  --border: #262e33;
+  --muted: #1d2327;
+  --muted-foreground: #929ca6;
+  --primary: #2dd4c7;
+  --primary-foreground: #06201d;
+  --destructive: #e5675c;
+  --destructive-foreground: #250705;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

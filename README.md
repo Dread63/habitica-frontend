@@ -8,8 +8,8 @@ Not affiliated with or endorsed by Habitica.
 
 ## Status
 
-Pre-code. Phase 0 (API validation + documentation) is complete — see `CLAUDE.md` for the current
-phase and `docs/implementation-plan.md` for the full roadmap.
+Phase 1 (foundation) in progress. See `CLAUDE.md` for current phase and `docs/implementation-plan.md`
+for the full roadmap.
 
 ## Docs
 
@@ -18,9 +18,17 @@ phase and `docs/implementation-plan.md` for the full roadmap.
 - `docs/habitica-api.md` — curated Habitica API v3 reference for this project
 - `docs/api-examples/` — real example API payloads + a script to capture your own
 
-## Setup (once there's code to run)
+## Local development
 
 ```sh
-cp .env.example .env   # set HABITICA_CLIENT_ID to <your-habitica-user-id>-habitica-modern-frontend
+npm install
+cp .env.example .env   # set VITE_HABITICA_CLIENT_ID to <your-habitica-user-id>-habitica-modern-frontend
+npm run dev
+```
+
+## Docker
+
+```sh
+cp .env.example .env
 docker compose up --build
 ```

@@ -1,0 +1,9 @@
+services:
+  habitica-frontend:
+    build:
+      context: .
+      args:
+        VITE_HABITICA_CLIENT_ID: ${VITE_HABITICA_CLIENT_ID:?set VITE_HABITICA_CLIENT_ID in .env — see .env.example}
+    ports:
+      - "${HOST_PORT:-8080}:80"
+    restart: unless-stopped
