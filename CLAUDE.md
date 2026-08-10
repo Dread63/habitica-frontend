@@ -6,8 +6,10 @@ frontend only supports AND-only include). Full design rationale: `docs/implement
 
 ## Status
 
-**Phase 0, 1, 2, and 3 are done.** Start at Phase 4 (redesign polish + the backlog in §6a of
-`docs/implementation-plan.md`). See that doc's §6 for the full phase breakdown.
+**Phase 0 through 4 are done** — the full §6a backlog (quick-add bar, reward/XP feedback,
+detail view, compact density) plus loading/empty-state polish. Phase 5 (party/guilds/chat/market
+— optional, separately scoped) and Phase 6 (Docker hardening) remain. See
+`docs/implementation-plan.md` §6 for the full phase breakdown.
 
 What Phase 0 established:
 - **CORS is open** on the Habitica API (`access-control-allow-origin: *`, verified via a live
@@ -112,9 +114,55 @@ What Phase 3 built (the tag filter engine — the feature this project exists fo
   `tasksQuery.data` through `filterTasksByTags()` before grouping by type — per-column counts
   reflect the filtered set for free, no extra wiring needed.
 - **Bundle size note:** the production build now warns about a >500KB JS chunk (was under 500KB
-  through Phase 2). Not a problem yet (~155KB gzipped), but if it keeps growing — Phase 5's scope
-  in particular — code-splitting (lazy-load dialogs, split vendor chunks) is worth revisiting
-  rather than ignoring the warning indefinitely.
+  through Phase 2). Not a problem yet (~158KB gzipped after Phase 4), but if it keeps growing —
+  Phase 5's scope in particular — code-splitting (lazy-load dialogs, split vendor chunks) is worth
+  revisiting rather than ignoring the warning indefinitely.
+
+What Phase 4 built (the full §6a backlog, syntax/architecture confirmed with the user via
+AskUserQuestion before writing any code — same lesson as the tag-filter rework: settle design
+questions before implementing, not after):
+
+- **Quick-add bar** (`src/features/tasks/quickAdd.ts` + `QuickAddBar.tsx`) — one input above the
+  columns, not per-category floating dialogs. Shorthand: `#tag` (repeatable, auto-creates the tag
+  if it doesn't exist yet), `/habit` `/daily` `/todo` `/reward` (defaults to todo), `!`/`!!`/`~`
+  for medium/hard/trivial (defaults to easy). Pure tokenizer (`parseQuickAdd`), 25 tests including
+  the tricky edge cases — a trailing `!` glued to a word is never mistaken for the difficulty
+  marker, an unrecognized `/word` is left in the text rather than silently eaten. Live preview
+  line under the input shows the parsed type/difficulty/tags as you type. New tags resolve
+  sequentially (not `Promise.all`) so two `#same-tag` mentions in one input reuse the tag just
+  created instead of racing two creates for the same name.
+- **Reward/XP feedback on scoring** — new `src/features/user/useUser.ts` (`GET /user?userFields=`,
+  the Phase 0 finding, cached under `['user']`), kept in sync by `useScoreTask`'s `onSuccess`.
+  `TaskCard` snapshots stats *before* scoring, diffs against the response, and shows a small
+  fading "+3 XP · +1 GP" badge (`ScoreFlash`) near the scored control.
+  **Known subtlety handled deliberately:** exp resets on level-up, so a raw before/after diff
+  would show a large nonsensical negative number right when you level up — `expGained` is
+  `undefined` (not shown) whenever `leveledUp` is true, and "Level up!" is shown instead. Also
+  added: the header shows current level/gold, and reward-buy buttons disable with a tooltip when
+  unaffordable (both were "Phase 4 candidate" notes left in Phase 2, now built).
+- **Expandable detail view** — `TaskEditorDialog` gained a `view`/`form` sub-state for edit mode
+  (create mode still always opens straight to the form). Clicking a card's title/notes opens
+  `view` (full-width rendered markdown, full interactive checklist, a metadata `<dl>`, an Edit
+  button); the pencil icon jumps straight to `form`. `ChecklistSection`/`ChecklistItemRow` were
+  extracted out of `TaskCard.tsx` into their own file specifically so both the compact card and
+  the detail view render the *same* interactive checklist rather than a second, divergent
+  read-only copy. **HTML-nesting gotcha worth remembering:** markdown notes can contain links, and
+  `<a>` can't legally nest inside `<button>` — so only the task title is a real `<button>`
+  (keyboard-accessible); the notes preview is a plain `<div>` with its own `onClick`, guarded to
+  skip opening the dialog when the click landed on a link (`event.target.closest('a')`).
+- **Compact density toggle** — `src/features/theme/DensityProvider.tsx` + `DensityToggle.tsx`.
+  Deliberately *not* the same three-state shape as `ThemeProvider`: density has no OS-level signal
+  to fall back to (no `prefers-density`), so it's a plain two-state (`comfortable`/`compact`)
+  toggle, and since nothing about density needs a CSS custom-property cascade, there's no root
+  class applied either — components just read `useDensity()` directly. Compact mode: tighter
+  card padding/gaps, notes preview hidden entirely (full notes are one click away via the detail
+  view), checklist collapses to just the "X/Y subtasks" count (`ChecklistSection`'s `summaryOnly`
+  prop).
+- **Loading/empty/error state polish** — `TaskListSkeleton` mirrors the real sidebar+columns
+  layout (no layout jump when data arrives) instead of bare "Loading tasks…" text; the error state
+  gained a "Try again" button wired to `tasksQuery.refetch()`; empty columns are now a clickable
+  dashed-border prompt that opens that column's create dialog directly, instead of static
+  "Nothing here." text.
 
 ## Architecture (decided, don't re-litigate without reason)
 
@@ -192,13 +240,24 @@ exclusion wins). Full spec incl. the revision history: `docs/implementation-plan
    auth screen, read-only task list (all 4 types), light/dark toggle
 2. ✅ Core interactions — scoring, create/edit/delete, checklists, difficulty/streak display
 3. ✅ **Tag filter engine** — tag CRUD UI + the include/exclude filter with an any/all mode + saved presets
-4. Redesign polish — full theming pass, responsive layout, loading/empty states, **+ the §6a
-   backlog** (quick-add bar, scoring feedback, expandable detail view, compact density toggle)
+4. ✅ Redesign polish — loading/empty states, **+ the full §6a backlog** (quick-add bar, scoring
+   feedback, expandable detail view, compact density toggle). "Full theming pass" and a dedicated
+   responsive-layout pass were folded into this work rather than done as a separate abstract
+   effort — see the note below.
 5. *(separately-scoped, optional)* Party/guilds/chat/challenges/market/equipment — full RPG/social
    parity. Don't start this without an explicit decision to — see the plan for why.
 6. Docker hardening — healthcheck, multi-arch build, versioned tags, TLS-behind-reverse-proxy notes
 
-Next up: **Phase 4.**
+**Nothing is queued next.** Phases 1–4 are the "fully usable daily-driver" milestone the original
+plan recommended stopping at (`docs/implementation-plan.md` §6). Remaining scope is Phase 5 (a
+second application's worth of work — RPG/social features — needs an explicit decision to start,
+not a default) and Phase 6 (Docker hardening: the Dockerfile/compose have never been build-tested
+against a real Docker daemon in the sandbox this was built in — see the note in "What Phase 1
+built" above — that's the one concrete gap worth closing even if Phase 5 stays out of scope).
+A dedicated visual-design pass (distinct task-type accents beyond color/icon, animation/transition
+polish, tighter responsive breakpoints tested on a real narrow viewport) is also still open if the
+"modern, intuitive" bar isn't fully met yet — ask the user rather than assuming which of these to
+pick up.
 
 **Phase 4 has a real backlog now, captured during Phase 2 testing — see
 `docs/implementation-plan.md` §6a before assuming Phase 4 is just "polish":** a universal

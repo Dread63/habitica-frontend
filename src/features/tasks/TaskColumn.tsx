@@ -1,10 +1,9 @@
 import * as React from 'react'
-import { Plus } from 'lucide-react'
+import { Inbox, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { type DialogHandle } from '@/components/ui/dialog'
 import type { Task } from '@/lib/habitica/types'
 import { TaskCard } from './TaskCard'
-import { TaskEditorDialog } from './TaskEditorDialog'
+import { TaskEditorDialog, type TaskEditorHandle } from './TaskEditorDialog'
 
 interface TaskColumnProps {
   type: Task['type']
@@ -14,7 +13,7 @@ interface TaskColumnProps {
 }
 
 export function TaskColumn({ type, title, tasks, tagNamesById }: TaskColumnProps) {
-  const createDialogRef = React.useRef<DialogHandle>(null)
+  const createDialogRef = React.useRef<TaskEditorHandle>(null)
 
   return (
     <section className="flex min-w-0 flex-1 flex-col gap-2">
@@ -34,7 +33,16 @@ export function TaskColumn({ type, title, tasks, tagNamesById }: TaskColumnProps
         </Button>
       </div>
       <div className="flex flex-col gap-2">
-        {tasks.length === 0 && <p className="px-1 text-sm text-muted-foreground">Nothing here.</p>}
+        {tasks.length === 0 && (
+          <button
+            type="button"
+            onClick={() => createDialogRef.current?.open()}
+            className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-border px-3 py-6 text-center transition-colors hover:border-muted-foreground/40 hover:bg-muted/50"
+          >
+            <Inbox className="size-5 text-muted-foreground/50" />
+            <span className="text-xs text-muted-foreground">Nothing here — add one</span>
+          </button>
+        )}
         {tasks.map((task) => (
           <TaskCard key={task.id} task={task} tagNamesById={tagNamesById} />
         ))}

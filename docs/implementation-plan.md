@@ -110,21 +110,23 @@ Implementation notes:
 
 | Phase | Scope | Notes |
 |---|---|---|
-| **0 — Spike** (~half day) | Confirm CORS from browser; hit `/user`, `/tasks/user`, `/tags` with curl using a real test account; capture real response JSON | De-risks the "no backend" decision before any app code exists |
-| **1 — Foundation** | Docker/compose skeleton, Vite+React+TS scaffold, API client + rate limiter, auth screen, read-only task list rendering all 4 types, light/dark toggle | First runnable thing |
-| **2 — Core interactions** | Scoring (habit +/−, daily checkbox, todo complete, reward buy), create/edit/delete task, checklists, difficulty/streak display | Matches baseline Habitica task functionality |
-| **3 — Tag filter engine** | Tag CRUD UI + the include/exclude filter with an any/all mode (§4) + saved presets | This is the headline feature you asked for |
-| **4 — Redesign polish** | Full theming pass, responsive layout, transitions, empty/loading states, **+ the interaction-polish backlog below** (§6a) | "Modern and intuitive" lands here |
-| **5 — Stretch: RPG/social parity** *(optional, separate milestone)* | Avatar/equipment, party, guilds, chat, challenges, inbox, quests, market | This alone is bigger than Phases 1–4 combined — see note below |
-| **6 — Docker hardening** | Healthcheck, multi-arch build, versioned tags, README, optional Caddy/Traefik labels for TLS behind a reverse proxy | Ship-readiness |
+| ✅ **0 — Spike** (~half day) | Confirm CORS from browser; hit `/user`, `/tasks/user`, `/tags` with curl using a real test account; capture real response JSON | De-risks the "no backend" decision before any app code exists |
+| ✅ **1 — Foundation** | Docker/compose skeleton, Vite+React+TS scaffold, API client + rate limiter, auth screen, read-only task list rendering all 4 types, light/dark toggle | First runnable thing |
+| ✅ **2 — Core interactions** | Scoring (habit +/−, daily checkbox, todo complete, reward buy), create/edit/delete task, checklists, difficulty/streak display | Matches baseline Habitica task functionality |
+| ✅ **3 — Tag filter engine** | Tag CRUD UI + the include/exclude filter with an any/all mode (§4) + saved presets | This is the headline feature you asked for |
+| ✅ **4 — Redesign polish** | Loading/empty states, **+ the full interaction-polish backlog** (§6a) | "Modern and intuitive" — see CLAUDE.md for what shipped and what's still open (a dedicated task-type visual-accent pass, animation polish, narrow-viewport testing) |
+| **5 — Stretch: RPG/social parity** *(optional, separate milestone, not started)* | Avatar/equipment, party, guilds, chat, challenges, inbox, quests, market | This alone is bigger than Phases 1–4 combined — see note below |
+| **6 — Docker hardening** *(not started)* | Healthcheck, multi-arch build, versioned tags, README, optional Caddy/Traefik labels for TLS behind a reverse proxy | Ship-readiness. The Dockerfile/compose from Phase 1 have still never been build-tested against a real Docker daemon — see CLAUDE.md |
 
 **Recommendation:** Phases 1–4 fully solve the two problems you actually described (dark mode/modern UI, real tag logic) and produce a genuinely usable daily-driver replacement for the task-management side of Habitica. Treat Phase 5 (party, guilds, chat, market, pets/mounts/equipment) as a later, separately-scoped decision — it's a full second application's worth of work, and it's worth using the app for a while first to see if you even miss those features in a personal tool.
 
 ## 6a. Phase 4 backlog — requested during Phase 2 testing
 
-Captured here in full so none of this needs to be re-derived or re-asked-about when Phase 4
-actually starts. Default order: after Phase 3 (tag filtering), since that's still the headline
-feature — but nothing below is blocked on it, so pull items forward if it turns out to matter sooner.
+**Built — see CLAUDE.md's "What Phase 4 built" for the actual implementation** (file names,
+the design decisions that got confirmed via AskUserQuestion before writing code, and the
+subtleties each one turned up, like exp resetting on level-up). The five items below are kept
+as the original request/rationale for context; treat CLAUDE.md as the source of truth for
+current behavior if the two ever seem to disagree.
 
 ### 1. Universal quick-add bar
 

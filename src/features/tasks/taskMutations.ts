@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { habiticaClient } from '@/lib/habitica/client'
-import type { CreateTaskInput, ScoreTaskResult, Task, UpdateTaskInput } from '@/lib/habitica/types'
+import type { CreateTaskInput, HabiticaUser, ScoreTaskResult, Task, UpdateTaskInput } from '@/lib/habitica/types'
 
 function replaceTaskInCache(queryClient: QueryClient, updated: Task) {
   queryClient.setQueryData<Task[]>(['tasks'], (old) => old?.map((t) => (t.id === updated.id ? updated : t)))
@@ -8,6 +8,30 @@ function replaceTaskInCache(queryClient: QueryClient, updated: Task) {
 
 function removeTaskFromCache(queryClient: QueryClient, taskId: string) {
   queryClient.setQueryData<Task[]>(['tasks'], (old) => old?.filter((t) => t.id !== taskId))
+}
+
+/** Score response carries `delta`/`_tmp` alongside the stats fields — keep only what UserStats expects. */
+function updateUserStatsInCache(queryClient: QueryClient, result: ScoreTaskResult) {
+  queryClient.setQueryData<HabiticaUser>(['user'], (old) =>
+    old
+      ? {
+          ...old,
+          stats: {
+            hp: result.hp,
+            mp: result.mp,
+            exp: result.exp,
+            gp: result.gp,
+            lvl: result.lvl,
+            class: result.class,
+            points: result.points,
+            str: result.str,
+            con: result.con,
+            int: result.int,
+            per: result.per,
+          },
+        }
+      : old,
+  )
 }
 
 /**
@@ -38,6 +62,7 @@ export function useScoreTask() {
     onError: (_err, _vars, context) => {
       if (context?.previous) queryClient.setQueryData(['tasks'], context.previous)
     },
+    onSuccess: (result) => updateUserStatsInCache(queryClient, result),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },

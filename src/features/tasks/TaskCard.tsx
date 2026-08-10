@@ -1,24 +1,20 @@
 import * as React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { Circle, CircleCheck, ChevronUp, ChevronDown, Coins, Flame, Pencil, Trash2, Plus, X } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Circle, CircleCheck, ChevronUp, ChevronDown, Coins, Flame, Pencil, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { type DialogHandle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { useTwemoji } from '@/lib/useTwemoji'
-import type { Task } from '@/lib/habitica/types'
+import type { HabiticaUser, Task } from '@/lib/habitica/types'
+import { useUser } from '@/features/user/useUser'
+import { useDensity } from '@/features/theme/DensityProvider'
 import { PRIORITY_LABELS } from './priority'
 import { getTaskColorSwatch } from './taskColor'
-import { TaskEditorDialog } from './TaskEditorDialog'
-import {
-  useAddChecklistItem,
-  useDeleteChecklistItem,
-  useDeleteTask,
-  useScoreChecklistItem,
-  useScoreTask,
-} from './taskMutations'
+import { TaskEditorDialog, type TaskEditorHandle } from './TaskEditorDialog'
+import { ChecklistSection } from './ChecklistSection'
+import { useDeleteTask, useScoreTask } from './taskMutations'
 
 interface TaskCardProps {
   task: Task
@@ -26,15 +22,64 @@ interface TaskCardProps {
   tagNamesById: ReadonlyMap<string, string>
 }
 
+interface ScoreFlashData {
+  /** undefined, not 0, when a level-up makes the raw diff meaningless (exp
+   * resets on level-up — see handleScore). */
+  expGained?: number
+  gpGained: number
+  hpChange: number
+  leveledUp: boolean
+}
+
+/**
+ * Read-focused detail view lives in TaskEditorDialog (opened in 'view' mode)
+ * — clicking the title/notes area here opens that; the pencil icon opens
+ * straight to the form. Both share one dialog instance/ref.
+ */
 export function TaskCard({ task, tagNamesById }: TaskCardProps) {
   const swatch = getTaskColorSwatch(task)
   const textRef = useTwemoji<HTMLParagraphElement>([task.text])
   const notesRef = useTwemoji<HTMLDivElement>([task.notes])
   const checklist = 'checklist' in task ? task.checklist : undefined
 
+  const { density } = useDensity()
+  const isCompact = density === 'compact'
+  const queryClient = useQueryClient()
+  const userQuery = useUser()
   const scoreTask = useScoreTask()
   const deleteTask = useDeleteTask()
-  const editDialogRef = React.useRef<DialogHandle>(null)
+  const editDialogRef = React.useRef<TaskEditorHandle>(null)
+  const [scoreFlash, setScoreFlash] = React.useState<ScoreFlashData | null>(null)
+  const flashTimeoutRef = React.useRef<number | undefined>(undefined)
+
+  // Undefined gold (query not loaded yet) reads as "affordable" rather than
+  // false-disabling the button before we actually know.
+  const canAffordReward = task.type !== 'reward' || (userQuery.data?.stats.gp ?? Infinity) >= task.value
+
+  React.useEffect(() => () => window.clearTimeout(flashTimeoutRef.current), [])
+
+  function handleScore(direction: 'up' | 'down') {
+    const statsBefore = queryClient.getQueryData<HabiticaUser>(['user'])?.stats
+    scoreTask.mutate(
+      { taskId: task.id, direction },
+      {
+        onSuccess: (result) => {
+          if (!statsBefore) return // no baseline yet (e.g. first action before ['user'] loaded) — skip the flash, not worth a wrong number
+          const leveledUp = result.lvl > statsBefore.lvl
+          setScoreFlash({
+            // exp resets on level-up, so a raw diff would show a nonsensical
+            // large negative number — omit it rather than show something wrong.
+            expGained: leveledUp ? undefined : result.exp - statsBefore.exp,
+            gpGained: result.gp - statsBefore.gp,
+            hpChange: result.hp - statsBefore.hp,
+            leveledUp,
+          })
+          window.clearTimeout(flashTimeoutRef.current)
+          flashTimeoutRef.current = window.setTimeout(() => setScoreFlash(null), 1800)
+        },
+      },
+    )
+  }
 
   function handleDelete() {
     if (window.confirm(`Delete "${task.text}"? This can't be undone.`)) {
@@ -43,26 +88,67 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
   }
 
   return (
-    <Card className="flex items-start gap-3 border-l-4 p-3" style={{ borderLeftColor: swatch.accent }}>
-      <div className="mt-0.5 shrink-0 text-muted-foreground">
+    <Card
+      className={cn('flex items-start border-l-4', isCompact ? 'gap-2 p-2' : 'gap-3 p-3')}
+      style={{ borderLeftColor: swatch.accent }}
+    >
+      <div className="relative mt-0.5 shrink-0 text-muted-foreground">
         <Indicator
           task={task}
           isScoring={scoreTask.isPending}
-          onScore={(direction) => scoreTask.mutate({ taskId: task.id, direction })}
+          onScore={handleScore}
+          canAffordReward={canAffordReward}
         />
+        {scoreFlash && <ScoreFlash data={scoreFlash} />}
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+      <div className={cn('flex min-w-0 flex-1 flex-col', isCompact ? 'gap-0.5' : 'gap-1')}>
         <div className="flex items-start justify-between gap-2">
-          <p
-            ref={textRef}
-            className={cn(
-              'text-sm leading-snug',
-              'completed' in task && task.completed && 'text-muted-foreground line-through',
+          {/* Clickable zone is title+notes. Notes can contain markdown links,
+              which can't legally nest inside a <button> — so only the title
+              is a real button (keyboard-accessible entry point); the notes
+              preview is a plain div with its own onClick for mouse users,
+              guarded so clicking a link inside it navigates instead of also
+              opening the dialog. Kept as siblings of the edit/delete buttons
+              below, not a wrapper around them, so nothing needs stopPropagation. */}
+          <div className="min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={() => editDialogRef.current?.open('view')}
+              className="block w-full text-left"
+              aria-label={`View ${task.text}`}
+            >
+              <p
+                ref={textRef}
+                className={cn(
+                  'text-sm leading-snug',
+                  'completed' in task && task.completed && 'text-muted-foreground line-through',
+                )}
+              >
+                {task.text}
+              </p>
+            </button>
+            {/* Compact density skips the notes preview entirely (that's the
+                point — fewer lines per card); full notes are always one
+                click away via the detail view. */}
+            {task.notes && !isCompact && (
+              <div
+                ref={notesRef}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest('a')) return // let the link navigate instead
+                  editDialogRef.current?.open('view')
+                }}
+                className={cn(
+                  'prose prose-sm line-clamp-3 max-w-none cursor-pointer text-xs text-muted-foreground',
+                  'prose-p:my-0.5 prose-headings:my-1 prose-headings:text-foreground',
+                  'prose-a:text-primary prose-strong:text-foreground prose-li:my-0',
+                  'dark:prose-invert',
+                )}
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.notes}</ReactMarkdown>
+              </div>
             )}
-          >
-            {task.text}
-          </p>
+          </div>
           <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity hover:opacity-100">
             <Button
               type="button"
@@ -70,7 +156,7 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
               size="icon"
               className="h-6 w-6"
               aria-label={`Edit ${task.text}`}
-              onClick={() => editDialogRef.current?.open()}
+              onClick={() => editDialogRef.current?.open('form')}
             >
               <Pencil className="size-3" />
             </Button>
@@ -88,21 +174,9 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
           </div>
         </div>
 
-        {task.notes && (
-          <div
-            ref={notesRef}
-            className={cn(
-              'prose prose-sm max-w-none text-xs text-muted-foreground',
-              'prose-p:my-0.5 prose-headings:my-1 prose-headings:text-foreground',
-              'prose-a:text-primary prose-strong:text-foreground prose-li:my-0',
-              'dark:prose-invert',
-            )}
-          >
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.notes}</ReactMarkdown>
-          </div>
+        {checklist !== undefined && (
+          <ChecklistSection taskId={task.id} items={checklist} summaryOnly={isCompact} />
         )}
-
-        {checklist !== undefined && <ChecklistSection taskId={task.id} items={checklist} />}
 
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
@@ -134,118 +208,25 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
   )
 }
 
-function ChecklistSection({
-  taskId,
-  items,
-}: {
-  taskId: string
-  items: { id: string; text: string; completed: boolean }[]
-}) {
-  const scoreItem = useScoreChecklistItem()
-  const deleteItem = useDeleteChecklistItem()
-  const addItem = useAddChecklistItem()
-  const [isAdding, setIsAdding] = React.useState(false)
-  const [newText, setNewText] = React.useState('')
-
-  const done = items.filter((i) => i.completed).length
-
-  function handleAdd(event: React.FormEvent) {
-    event.preventDefault()
-    const text = newText.trim()
-    if (!text) return
-    addItem.mutate(
-      { taskId, text },
-      {
-        onSuccess: () => {
-          setNewText('')
-          setIsAdding(false)
-        },
-      },
-    )
-  }
+function ScoreFlash({ data }: { data: ScoreFlashData }) {
+  const parts: string[] = []
+  if (data.expGained !== undefined && data.expGained > 0) parts.push(`+${Math.round(data.expGained)} XP`)
+  if (data.gpGained !== 0) parts.push(`${data.gpGained > 0 ? '+' : ''}${Math.round(data.gpGained * 10) / 10} GP`)
+  if (data.hpChange < -0.05) parts.push(`${Math.round(data.hpChange)} HP`)
+  if (parts.length === 0 && !data.leveledUp) return null
 
   return (
-    <div className="mt-0.5 flex flex-col gap-0.5">
-      {items.length > 0 && (
-        <p className="text-[11px] text-muted-foreground">
-          {done}/{items.length} subtasks
-        </p>
+    <div
+      aria-live="polite"
+      className={cn(
+        'pointer-events-none absolute -top-2 left-6 z-10 animate-[fade-up_1.8s_ease-out_forwards]',
+        'rounded-full border border-border bg-card px-2 py-0.5 text-[11px] font-medium whitespace-nowrap shadow-md',
       )}
-      <ul className="flex flex-col gap-0.5">
-        {items.map((item) => (
-          <ChecklistItemRow
-            key={item.id}
-            item={item}
-            onToggle={() => scoreItem.mutate({ taskId, itemId: item.id })}
-            onDelete={() => deleteItem.mutate({ taskId, itemId: item.id })}
-            disabled={scoreItem.isPending || deleteItem.isPending}
-          />
-        ))}
-      </ul>
-
-      {isAdding ? (
-        <form onSubmit={handleAdd} className="mt-0.5 flex items-center gap-1">
-          <Input
-            autoFocus
-            value={newText}
-            onChange={(e) => setNewText(e.target.value)}
-            onBlur={() => {
-              if (!newText.trim()) setIsAdding(false)
-            }}
-            placeholder="Subtask text"
-            className="h-6 text-xs"
-          />
-          <Button type="submit" size="icon" className="h-6 w-6" disabled={addItem.isPending} aria-label="Add subtask">
-            <Plus className="size-3" />
-          </Button>
-        </form>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setIsAdding(true)}
-          className="mt-0.5 flex items-center gap-1 self-start text-[11px] text-muted-foreground hover:text-foreground"
-        >
-          <Plus className="size-3" /> Add subtask
-        </button>
-      )}
+    >
+      {data.leveledUp && <span className="text-primary">Level up!</span>}
+      {data.leveledUp && parts.length > 0 && ' · '}
+      {parts.join(' · ')}
     </div>
-  )
-}
-
-function ChecklistItemRow({
-  item,
-  onToggle,
-  onDelete,
-  disabled,
-}: {
-  item: { text: string; completed: boolean }
-  onToggle: () => void
-  onDelete: () => void
-  disabled: boolean
-}) {
-  const ref = useTwemoji<HTMLSpanElement>([item.text])
-  return (
-    <li className="group flex items-start gap-1.5 text-xs">
-      <button type="button" onClick={onToggle} disabled={disabled} className="mt-0.5 shrink-0">
-        {item.completed ? (
-          <CircleCheck className="size-3 text-primary" />
-        ) : (
-          <Circle className="size-3 text-muted-foreground" />
-        )}
-      </button>
-      <span ref={ref} className={cn('flex-1', item.completed && 'text-muted-foreground line-through')}>
-        {item.text}
-      </span>
-      <button
-        type="button"
-        onClick={onDelete}
-        disabled={disabled}
-        aria-label="Delete subtask"
-        className="shrink-0 opacity-0 group-hover:opacity-100"
-      >
-        <X className="size-3 text-muted-foreground hover:text-destructive" />
-      </button>
-    </li>
   )
 }
 
@@ -253,10 +234,12 @@ function Indicator({
   task,
   onScore,
   isScoring,
+  canAffordReward,
 }: {
   task: Task
   onScore: (direction: 'up' | 'down') => void
   isScoring: boolean
+  canAffordReward: boolean
 }) {
   if (task.type === 'habit') {
     return (
@@ -284,7 +267,14 @@ function Indicator({
   }
   if (task.type === 'reward') {
     return (
-      <button type="button" disabled={isScoring} onClick={() => onScore('up')} aria-label={`Buy ${task.text}`}>
+      <button
+        type="button"
+        disabled={isScoring || !canAffordReward}
+        onClick={() => onScore('up')}
+        aria-label={`Buy ${task.text}`}
+        title={canAffordReward ? undefined : 'Not enough gold'}
+        className="disabled:opacity-40"
+      >
         <Coins className="size-4" />
       </button>
     )

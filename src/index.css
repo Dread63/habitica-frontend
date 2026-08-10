@@ -94,6 +94,15 @@ body {
   }
 }
 
+/* Reward/XP feedback flash on scoring — see ScoreFlash in TaskCard.tsx.
+   The reduced-motion rule above already zeroes this to an instant
+   show/hide, so no separate reduced-motion variant is needed here. */
+@keyframes fade-up {
+  0% { opacity: 1; transform: translateY(0); }
+  70% { opacity: 1; transform: translateY(-4px); }
+  100% { opacity: 0; transform: translateY(-12px); }
+}
+
 /*
  * Twemoji replaces emoji characters with <img> tags (see
  * src/lib/useTwemoji.ts) so they render consistently regardless of whether
