@@ -20,6 +20,32 @@ docs site) since it's plain text, not a rendered app.
 https://habitica.com/api/v3/
 ```
 
+**Why v3 and not v4.** Habitica's own web client actually calls `/api/v4/...` for everything —
+but confirmed directly from their route-mounting source (`vendor/appRoutes.js`): *"API v4 proxies
+API v3 routes by default. It can also disable or override v3 routes."* Concretely, `v4Router`
+walks the exact same `api-v3/` controller files first, then layers `api-v4/` on top. For every
+task/tag route this project uses, v3 and v4 run **identical handler code** — there is no
+behavioral difference to chase. v4 adds exactly one task-related extra
+(`POST /tasks/bulk-score` — score multiple tasks in one call, vendored at
+`vendor/api-v4-tasks.js`) and overrides a short list of non-task routes (`GET`/`PUT /user`,
+registration, `/news`, class-cast, rebirth/reset/reroll, messages, coupons — full list in
+`vendor/appRoutes.js`'s `v4RouterOverrides`). Every v4-only or v4-overridden route is marked
+`@apiIgnore` in their source — deliberately excluded from the public apidoc — which reads as
+"this is our own client's internal surface, not a documented third-party contract." **v3 stays
+the base URL for that reason**: it's the version Habitica publishes and supports for outside
+integrations. `bulk-score` is a plausible future optimization (fewer requests against the rate
+limit) but would mean relying on undocumented, `@apiIgnore`d behavior — not worth it unless
+scoring-heavy usage actually demands it.
+
+One genuinely useful thing this detour surfaced: **`GET /user` (v3, the one we use) accepts a
+`?userFields=` query param** — a comma-separated field list to return instead of the entire user
+document (documented in `vendor/user.controller.js` right where `api.getUser` is defined; easy to
+miss since it's just one line in a huge file, which is exactly how this got missed the first
+time). Since this project only needs a handful of fields (see § User below), every `/user` call
+should use it, e.g. `GET /user?userFields=preferences,stats,profile.name` — meaningfully smaller
+payload than pulling the full document (achievements, full inventory, party, purchase history,
+etc.) every time.
+
 Every authenticated request needs **three** headers:
 
 | Header | Value | Notes |
@@ -140,10 +166,13 @@ API exposes conventional CRUD for them:
 
 ### User (only the fields this app needs)
 
-`GET /user` returns the full user document — large (equipment, party, purchase history, etc.).
-Pull only what's relevant: `preferences.dayStart` (hour 0–23 daily reset happens), `preferences.timezoneOffset`,
-`stats` (hp/mp/exp/gp/lvl — needed to show reward affordability and habit scoring feedback),
-`profile.name`. Don't build UI around the rest of the user object unless a later phase (party/guild/equipment) needs it.
+`GET /user` returns the full user document by default — large (equipment, party, purchase
+history, etc.). **Use `?userFields=` to request only what's relevant** (see § Base URL above):
+`preferences.dayStart` (hour 0–23 daily reset happens), `preferences.timezoneOffset`, `stats`
+(hp/mp/exp/gp/lvl — needed to show reward affordability and habit scoring feedback),
+`profile.name`. Don't build UI around the rest of the user object unless a later phase
+(party/guild/equipment) needs it — and when it does, request those fields explicitly rather than
+dropping the filter and pulling everything.
 
 ---
 
@@ -259,5 +288,6 @@ participation — user-created tags are just `{id, name}`.
 | User preferences/stats/profile field shapes | `vendor/user.schema.js` |
 | Route definitions + official `@apiSuccessExample` blocks (source of the JSON in `api-examples/`) | `vendor/tasks.controller.js`, `vendor/tags.controller.js` |
 | `value` → display color logic + exact hex values | `vendor/task-color.getter.js`, `vendor/task-colors.scss`, `vendor/task-style.scss` |
+| Why v3 (not v4), what v4 actually adds/overrides | `vendor/appRoutes.js`, `vendor/api-v4-tasks.js`, `vendor/api-v4-user.js` |
 | Full OpenAPI spec (community-maintained, generated from Habitica's docs) | `vendor/openapi.yaml` |
 | Anything not in any of the above | `raw.githubusercontent.com/HabitRPG/habitica/develop/website/server/...` — this URL pattern works with fetch tools; `apidoc.habitica.com` does not |
