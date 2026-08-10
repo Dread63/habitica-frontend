@@ -187,3 +187,37 @@ export interface ScoreTaskResult extends UserStats {
   delta: number
   _tmp: Record<string, unknown>
 }
+
+/**
+ * Body for POST /tasks/user (create). Only `text` and `type` are required;
+ * everything else is optional and type-specific fields are ignored by the
+ * server for the wrong type (see docs/habitica-api.md § CreateUserTasks).
+ */
+export interface CreateTaskInput {
+  text: string
+  type: TaskType
+  notes?: string
+  tags?: string[]
+  attribute?: TaskAttribute
+  priority?: TaskPriority
+  checklist?: { text: string; completed?: boolean }[]
+  /** todo only */
+  date?: string
+  /** habit only */
+  up?: boolean
+  /** habit only */
+  down?: boolean
+  /** daily only */
+  frequency?: DailyTask['frequency']
+  /** daily only */
+  everyX?: number
+  /** daily only, frequency: "weekly" */
+  repeat?: DailyRepeat
+  /** daily only */
+  startDate?: string
+  /** reward only — gold cost */
+  value?: number
+}
+
+/** Body for PUT /tasks/:id (update) — same fields, all optional, `type` excluded (immutable). */
+export type UpdateTaskInput = Partial<Omit<CreateTaskInput, 'type'>>

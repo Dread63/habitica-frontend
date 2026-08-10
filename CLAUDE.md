@@ -6,8 +6,8 @@ frontend only supports AND-only include). Full design rationale: `docs/implement
 
 ## Status
 
-**Phase 0 and Phase 1 are done.** Start at Phase 2 (scoring, create/edit/delete, checklists).
-See `docs/implementation-plan.md` §6 for the full phase breakdown.
+**Phase 0, 1, and 2 are done.** Start at Phase 3 (the tag filter engine — see the dedicated
+section below). See `docs/implementation-plan.md` §6 for the full phase breakdown.
 
 What Phase 0 established:
 - **CORS is open** on the Habitica API (`access-control-allow-origin: *`, verified via a live
@@ -58,6 +58,29 @@ Phase 1 follow-up fixes (found via a real UI check, not originally scoped tightl
   genuinely absent emoji font). If that CDN dependency is unwanted later, vendor the Twemoji SVG
   set into `public/twemoji/` and point `useTwemoji`'s `base` option at it — noted here so it
   isn't silently forgotten.
+
+What Phase 2 built (scoring, create/edit/delete, checklist interactions):
+- `src/features/tasks/taskMutations.ts` — all task mutations. **Scoring is optimistic + always
+  reconciled**: `useScoreTask` flips `completed` locally on click for instant feedback, then
+  *always* invalidates `['tasks']` on settle rather than trying to replicate Habitica's
+  streak/history/`nextDue` math client-side — that logic is non-trivial (cron/day-start
+  dependent) and getting it subtly wrong would be worse than one extra fetch. Every other
+  mutation (create/update/checklist add/score/delete) adopts the response directly into the
+  TanStack Query cache via `setQueryData`, confirmed from `vendor/tasks.controller.js` to
+  actually return the updated task — delete is the one exception (`{}` response), handled with
+  optimistic removal + rollback on error instead.
+- `src/features/tasks/TaskEditorDialog.tsx` — shared create/edit form, built on a hand-authored
+  `<dialog>`-based `src/components/ui/dialog.tsx` (native focus trap/Esc/backdrop, no Radix
+  dependency). Covers text/notes/priority/tags for all types, plus habit up/down, daily
+  frequency+everyX+weekly repeat days, todo due date, reward gold cost. **Known gap:** monthly/
+  yearly daily scheduling (`daysOfMonth`/`weeksOfMonth`) isn't in the form — created dailies get
+  Habitica's default for those frequencies. Flagged in the UI, not silently dropped.
+- Checklist add/toggle/delete wired into `TaskCard`'s `ChecklistSection`.
+- Delete confirmation uses `window.confirm` — a deliberate placeholder, not a real modal; revisit
+  in Phase 4 if the native browser dialog feels out of place next to the rest of the redesign.
+- Habit up/down, daily/todo complete-toggle, and reward-buy are all live now — no gold-balance
+  check before letting a reward purchase attempt fire (the server will 400 on insufficient gold;
+  Phase 4 candidate: show the user's actual gold and disable affordable-check client-side).
 
 ## Architecture (decided, don't re-litigate without reason)
 
@@ -136,7 +159,7 @@ overlapping buckets, a tag present in both `anyOf` and `noneOf`) before building
    parity. Don't start this without an explicit decision to — see the plan for why.
 6. Docker hardening — healthcheck, multi-arch build, versioned tags, TLS-behind-reverse-proxy notes
 
-Next up: **Phase 2** — wire scoring (`POST /tasks/:id/score/:direction`), create/edit/delete,
-checklists. Remember the score endpoint's response is *user stats*, not the task (see
-`docs/habitica-api.md` § Footguns) — update the task optimistically in the TanStack Query cache
-rather than expecting the mutation response to contain it.
+Next up: **Phase 3** — tag CRUD UI + the `anyOf`/`allOf`/`noneOf` filter engine described above,
+plus saved filter presets. The filter function itself should be a pure, exhaustively-tested
+module *before* any UI is built around it — same pattern `taskColor.ts`/`taskColor.test.ts`
+already established in this codebase.

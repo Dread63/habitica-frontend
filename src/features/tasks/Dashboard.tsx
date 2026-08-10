@@ -55,7 +55,7 @@ export function Dashboard() {
       {tasksQuery.isSuccess && (
         <div className="flex flex-col gap-6 sm:flex-row">
           {COLUMNS.map(({ type, title }) => (
-            <TaskColumn key={type} title={title} tasks={tasksByType[type]} tagNamesById={tagNamesById} />
+            <TaskColumn key={type} type={type} title={title} tasks={tasksByType[type]} tagNamesById={tagNamesById} />
           ))}
         </div>
       )}
