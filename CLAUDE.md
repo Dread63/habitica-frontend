@@ -7,9 +7,24 @@ frontend only supports AND-only include). Full design rationale: `docs/implement
 ## Status
 
 **Phase 0 through 4 are done** — the full §6a backlog (quick-add bar, reward/XP feedback,
-detail view, compact density) plus loading/empty-state polish. Phase 5 (party/guilds/chat/market
-— optional, separately scoped) and Phase 6 (Docker hardening) remain. See
+detail view, compact density) plus loading/empty-state polish — **and so is a round of
+post-Phase-4 fixes and a visual/responsive design pass** (multi-word quick-add tags, task search,
+per-type visual accents, animation polish, a real responsive layout bug fix). Search "Post-Phase-4
+fixes" and "Visual/responsive design pass" below for the details. Phase 5 (party/guilds/chat/
+market — optional, separately scoped) and Phase 6 (Docker hardening) remain. See
 `docs/implementation-plan.md` §6 for the full phase breakdown.
+
+**Picking this up on a machine that actually has Docker (the concrete next step, per the notes
+below):**
+1. `cp .env.example .env`, set `VITE_HABITICA_CLIENT_ID` to `<your-habitica-user-id>-habitica-modern-frontend`
+2. `docker compose up --build` — this exact command has never been run against a real Docker
+   daemon before now; the Dockerfile/compose/nginx.conf are correct by inspection only (see "What
+   Phase 1 built" below and README.md's Docker section for the specific things to check: the
+   multi-stage build completes, `/healthz` responds, login works end-to-end against a real
+   Habitica account, and a hard refresh on a client-routed path doesn't 404)
+3. If that all works, Phase 6 (healthcheck is already there; multi-arch build, versioned tags,
+   TLS-behind-reverse-proxy notes remain) is the natural next unit of work — or just start using
+   the app daily and let real usage surface what's actually missing before committing to Phase 5.
 
 What Phase 0 established:
 - **CORS is open** on the Habitica API (`access-control-allow-origin: *`, verified via a live
@@ -290,9 +305,13 @@ exclusion wins). Full spec incl. the revision history: `docs/implementation-plan
   `docs/habitica-api.md` § Data shapes exactly; if a real API response disagrees with that doc,
   the doc is wrong and should be corrected in the same change, not silently worked around in a
   type assertion.
-- Tests: Vitest + Testing Library for units (especially the tag filter engine), Playwright + MSW
-  for e2e (MSW mocks the Habitica API so tests never burn real rate limit or need live
-  credentials).
+- Tests: Vitest, unit-testing every piece of pure business logic exhaustively *before* any UI is
+  built around it (tag filter, task-value color scale, quick-add parser, task search ranking, the
+  rate limiter) — this has been the actual correctness safety net so far. **Not built:**
+  `@testing-library/react`/`jest-dom` are installed but unused (no component-render tests exist
+  yet), and Playwright + MSW e2e (the original plan's proposal) was never set up at all — neither
+  is a dependency. Correct this doc or actually build it if that gap starts to matter; don't leave
+  it silently aspirational.
 
 ## Phase roadmap (from the implementation plan)
 
