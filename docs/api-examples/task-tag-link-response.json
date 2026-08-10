@@ -1,0 +1,60 @@
+{
+  "_comment_add": "POST /api/v3/tasks/:taskId/tags/:tagId — response after adding a tag to a task",
+  "add_tag_response": {
+    "success": true,
+    "data": {
+      "_id": "84f02d6a-7b43-4818-a35c-d3336cec4880",
+      "userId": "b0413351-405f-416f-8787-947ec1c85199",
+      "text": "Test API Params",
+      "alias": "test-api-params",
+      "type": "todo",
+      "notes": "",
+      "tags": ["3d5d324d-a042-4d5f-872e-0553e228553e"],
+      "value": -1,
+      "priority": 2,
+      "attribute": "int",
+      "challenge": {},
+      "group": {
+        "assignedUsers": [],
+        "approval": { "required": false, "approved": false, "requested": false }
+      },
+      "reminders": [],
+      "createdAt": "2017-01-13T21:23:05.949Z",
+      "updatedAt": "2017-01-14T19:41:29.466Z",
+      "checklist": [],
+      "collapseChecklist": false,
+      "completed": false,
+      "id": "84f02d6a-7b43-4818-a35c-d3336cec4880"
+    },
+    "notifications": []
+  },
+  "_comment_remove": "DELETE /api/v3/tasks/:taskId/tags/:tagId — response after removing a tag from a task (same task, tags array now empty)",
+  "remove_tag_response": {
+    "success": true,
+    "data": {
+      "_id": "84f02d6a-7b43-4818-a35c-d3336cec4880",
+      "userId": "b0413351-405f-416f-8787-947ec1c85199",
+      "text": "Test API Params",
+      "alias": "test-api-params",
+      "type": "todo",
+      "notes": "",
+      "tags": [],
+      "value": -1,
+      "priority": 2,
+      "attribute": "int",
+      "challenge": {},
+      "group": {
+        "assignedUsers": [],
+        "approval": { "required": false, "approved": false, "requested": false }
+      },
+      "reminders": [],
+      "createdAt": "2017-01-13T21:23:05.949Z",
+      "updatedAt": "2017-01-14T20:02:18.206Z",
+      "checklist": [],
+      "collapseChecklist": false,
+      "completed": false,
+      "id": "84f02d6a-7b43-4818-a35c-d3336cec4880"
+    },
+    "notifications": []
+  }
+}
