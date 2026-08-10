@@ -10,6 +10,10 @@ export interface DialogHandle {
 
 interface DialogProps {
   title: string
+  /** Optional leading icon next to the title — e.g. TaskEditorDialog's
+   * per-type icon (see taskType.ts). Purely decorative, so it's on the
+   * caller to keep it meaningful; the heading itself carries the text. */
+  icon?: React.ReactNode
   children: React.ReactNode
   /** Fires on the native `close` event — Esc, `.close()`, backdrop click, or a
    * `<form method="dialog">` submission all funnel through this one event. */
@@ -21,11 +25,13 @@ interface DialogProps {
  * modern browsers give focus trapping, Esc-to-close, and the top-layer
  * backdrop for free. Two preflight gotchas worth knowing if this needs
  * touching later: Tailwind's `margin: 0` reset defeats <dialog>'s native
- * auto-centering (fixed + translate below replaces it), and the `backdrop:`
- * variant (Tailwind v3.4+/v4) targets `::backdrop`, not a real DOM node.
+ * auto-centering (fixed positioning + the `.app-dialog` transform in
+ * index.css replaces it — that same rule also drives the open/close
+ * animation, see its comment), and the `backdrop:` variant (Tailwind
+ * v3.4+/v4) targets `::backdrop`, not a real DOM node.
  */
 export const Dialog = React.forwardRef<DialogHandle, DialogProps>(
-  ({ title, children, onClose }, ref) => {
+  ({ title, icon, children, onClose }, ref) => {
     const dialogRef = React.useRef<HTMLDialogElement>(null)
 
     React.useImperativeHandle(ref, () => ({
@@ -43,14 +49,22 @@ export const Dialog = React.forwardRef<DialogHandle, DialogProps>(
           if (event.target === dialogRef.current) dialogRef.current?.close()
         }}
         className={cn(
-          'fixed top-1/2 left-1/2 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2',
+          // Positioning only here — centering is folded into the app-dialog
+          // transform below (it also carries the open/close scale), and
+          // .app-dialog's transition/@starting-style rules in index.css
+          // drive the animation. See that rule's comment for why this is
+          // plain CSS rather than Tailwind's `open:`/`starting:` variants.
+          'app-dialog fixed top-1/2 left-1/2 w-[calc(100%-2rem)] max-w-md',
           'rounded-lg border border-border bg-card p-0 text-card-foreground shadow-lg',
           'backdrop:bg-black/50',
         )}
       >
         <div onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between border-b border-border p-4">
-            <h2 className="text-sm font-semibold">{title}</h2>
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+              {icon}
+              {title}
+            </h2>
             <Button
               type="button"
               variant="ghost"

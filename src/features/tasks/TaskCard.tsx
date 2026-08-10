@@ -89,7 +89,11 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
 
   return (
     <Card
-      className={cn('flex items-start border-l-4', isCompact ? 'gap-2 p-2' : 'gap-3 p-3')}
+      className={cn(
+        'flex items-start border-l-4 transition-shadow duration-150 hover:shadow-md',
+        'animate-[task-in_180ms_ease-out]',
+        isCompact ? 'gap-2 p-2' : 'gap-3 p-3',
+      )}
       style={{ borderLeftColor: swatch.accent }}
     >
       <div className="relative mt-0.5 shrink-0 text-muted-foreground">
@@ -249,7 +253,7 @@ function Indicator({
           disabled={!task.up || isScoring}
           onClick={() => onScore('up')}
           aria-label="Score up"
-          className="disabled:opacity-25"
+          className="transition-transform active:scale-90 disabled:opacity-25 disabled:active:scale-100"
         >
           <ChevronUp className="size-3.5" />
         </button>
@@ -258,7 +262,7 @@ function Indicator({
           disabled={!task.down || isScoring}
           onClick={() => onScore('down')}
           aria-label="Score down"
-          className="disabled:opacity-25"
+          className="transition-transform active:scale-90 disabled:opacity-25 disabled:active:scale-100"
         >
           <ChevronDown className="size-3.5" />
         </button>
@@ -273,7 +277,7 @@ function Indicator({
         onClick={() => onScore('up')}
         aria-label={`Buy ${task.text}`}
         title={canAffordReward ? undefined : 'Not enough gold'}
-        className="disabled:opacity-40"
+        className="transition-transform active:scale-90 disabled:opacity-40 disabled:active:scale-100"
       >
         <Coins className="size-4" />
       </button>
@@ -286,6 +290,7 @@ function Indicator({
       disabled={isScoring}
       onClick={() => onScore(task.completed ? 'down' : 'up')}
       aria-label={task.completed ? 'Mark incomplete' : 'Mark complete'}
+      className="transition-transform active:scale-90"
     >
       {task.completed ? <CircleCheck className="size-4 text-primary" /> : <Circle className="size-4" />}
     </button>

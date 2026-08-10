@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import type { Task } from '@/lib/habitica/types'
 import { TaskCard } from './TaskCard'
 import { TaskEditorDialog, type TaskEditorHandle } from './TaskEditorDialog'
+import { TASK_TYPE_META } from './taskType'
 
 interface TaskColumnProps {
   type: Task['type']
@@ -21,11 +22,16 @@ interface TaskColumnProps {
 
 export function TaskColumn({ type, title, tasks, tagNamesById, isFiltered }: TaskColumnProps) {
   const createDialogRef = React.useRef<TaskEditorHandle>(null)
+  const { icon: TypeIcon, accent } = TASK_TYPE_META[type]
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col gap-2">
-      <div className="flex items-center justify-between px-1">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+    <section className="flex min-w-0 flex-col gap-2">
+      <div
+        className="flex items-center justify-between border-b-2 px-1 pb-1.5"
+        style={{ borderBottomColor: `color-mix(in oklab, ${accent} 35%, transparent)` }}
+      >
+        <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <TypeIcon className="size-3.5" style={{ color: accent }} aria-hidden="true" />
           {title} <span className="text-muted-foreground/70">({tasks.length})</span>
         </h2>
         <Button

@@ -87,11 +87,75 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  /* ::backdrop is a real pseudo-element but isn't matched by `*`, so it's
+     listed explicitly — otherwise .app-dialog's backdrop fade below would
+     keep animating regardless of this preference. */
+  *, *::before, *::after, *::backdrop {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/*
+ * Dialog open/close transition, applied to every <dialog> in the app (they
+ * all go through components/ui/dialog.tsx). Written as plain CSS rather
+ * than Tailwind's `open:`/`starting:` variants because the two rules below
+ * need to nest inside @starting-style together with `transition-behavior:
+ * allow-discrete` — fiddly to express correctly as utility classes, and
+ * this is the same pattern MDN documents for animating <dialog>.
+ *
+ * Note this rule fully owns the dialog's transform (centering + the
+ * open/close scale together) — components/ui/dialog.tsx intentionally
+ * doesn't also apply Tailwind's translate-x/y utilities for centering, to
+ * avoid two rules fighting over the same property.
+ *
+ * Browser support: @starting-style + allow-discrete is Chrome 117+/Firefox
+ * 129+/Safari 17.4+ (2023-2024). Older browsers just skip the transition —
+ * the dialog still opens/closes instantly, no functional loss.
+ */
+.app-dialog {
+  transform: translate(-50%, -50%) scale(0.96);
+  opacity: 0;
+  transition:
+    opacity 150ms ease-out,
+    transform 150ms ease-out,
+    overlay 150ms ease-out allow-discrete,
+    display 150ms ease-out allow-discrete;
+}
+.app-dialog[open] {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+}
+@starting-style {
+  .app-dialog[open] {
+    transform: translate(-50%, -50%) scale(0.96);
+    opacity: 0;
+  }
+}
+.app-dialog::backdrop {
+  opacity: 0;
+  transition:
+    opacity 150ms ease-out,
+    overlay 150ms ease-out allow-discrete,
+    display 150ms ease-out allow-discrete;
+}
+.app-dialog[open]::backdrop {
+  opacity: 1;
+}
+@starting-style {
+  .app-dialog[open]::backdrop {
+    opacity: 0;
+  }
+}
+
+/* New task cards fade/slide in on mount. Cards are keyed by task.id, so
+   React reuses the existing DOM node (and skips this) when a task merely
+   reorders from search/filtering — it only plays for a task that's
+   genuinely new to the list. */
+@keyframes task-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Reward/XP feedback flash on scoring — see ScoreFlash in TaskCard.tsx.

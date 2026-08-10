@@ -30,7 +30,7 @@ export function TagFilterSidebar() {
   const tags = tagsQuery.data ?? []
 
   return (
-    <aside className="flex w-full shrink-0 flex-col gap-4 sm:w-56">
+    <aside className="flex w-full shrink-0 flex-col gap-4 lg:w-56">
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</h2>
         <Button

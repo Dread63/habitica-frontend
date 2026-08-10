@@ -14,6 +14,7 @@ import { useCreateTask, useUpdateTask } from './taskMutations'
 import { useTags } from './useTags'
 import { PRIORITY_LABELS } from './priority'
 import { ChecklistSection } from './ChecklistSection'
+import { TASK_TYPE_META } from './taskType'
 import type { CreateTaskInput, DailyRepeat, Task, TaskPriority, TaskType } from '@/lib/habitica/types'
 
 const DAY_KEYS: (keyof DailyRepeat)[] = ['su', 'm', 't', 'w', 'th', 'f', 's']
@@ -155,9 +156,14 @@ export const TaskEditorDialog = React.forwardRef<TaskEditorHandle, TaskEditorDia
   const showForm = props.mode === 'create' || subView === 'form'
 
   const title = props.mode === 'create' ? `New ${type}` : showForm ? `Edit ${type}` : capitalize(type)
+  const { icon: TypeIcon, accent } = TASK_TYPE_META[type]
 
   return (
-    <Dialog ref={dialogRef} title={title}>
+    <Dialog
+      ref={dialogRef}
+      title={title}
+      icon={<TypeIcon className="size-4" style={{ color: accent }} aria-hidden="true" />}
+    >
       {showForm ? (
         <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
           <Field label="Title">

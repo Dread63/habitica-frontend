@@ -53,8 +53,8 @@ export function Dashboard() {
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-7xl flex-col gap-6 p-4 sm:p-6">
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h1 className="text-lg font-semibold">Habitica</h1>
           {userQuery.data && (
             <p className="text-xs text-muted-foreground">
@@ -62,7 +62,7 @@ export function Dashboard() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <DensityToggle />
           <ThemeToggle />
           <Button variant="ghost" size="icon" aria-label="Log out" onClick={logout}>
@@ -91,9 +91,15 @@ export function Dashboard() {
       )}
 
       {tasksQuery.isSuccess && (
-        <div className="flex flex-col gap-6 sm:flex-row">
+        // Sidebar sits beside the columns only from lg (1024px) up — below
+        // that, 56px-of-sidebar + 4 columns in a row leaves each column
+        // unusably narrow (this was a real bug: the old sm:flex-row on both
+        // levels put all 5 in one row starting at just 640px). The columns
+        // themselves step from 1 -> 2 -> 4 across their own breakpoints
+        // (grid, not flex, so this doesn't depend on the sidebar's state).
+        <div className="flex flex-col gap-6 lg:flex-row">
           <TagFilterSidebar />
-          <div className="flex min-w-0 flex-1 flex-col gap-6 sm:flex-row">
+          <div className="grid min-w-0 flex-1 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {COLUMNS.map(({ type, title }) => (
               <TaskColumn
                 key={type}

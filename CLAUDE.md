@@ -185,6 +185,45 @@ Post-Phase-4 fixes from real-world testing:
   the normal empty-column "Nothing here — add one" prompt, which would otherwise misleadingly
   suggest the column has no tasks at all.
 
+Visual/responsive design pass (the item left open at the end of Phase 4):
+- **Per-type visual identity** (`src/features/tasks/taskType.ts`) — a small icon+color table, one
+  entry per task type, deliberately a *second, separate* color system from `taskColor.ts`'s
+  per-task "value" aging scale (the card's left-border accent, unchanged). Type accents only ever
+  appear in column headers (icon + a faint colored underline), the quick-add bar's live preview,
+  and the editor dialog's title — never on the card body — so the two systems are never adjacent
+  and can't be misread as conflicting signals about the same task. Colors aren't arbitrary: `todo`
+  reuses `--primary` (quick-add already defaults to todo, so this says "todo is the default,
+  central list"), `reward` is purple to match `taskColor.ts`'s existing convention that reward
+  cards are always purple; `habit` (indigo) and `daily` (sky) round out four hues distinct from
+  each other. `components/ui/dialog.tsx` gained an optional `icon` prop to carry this into dialog
+  titles.
+- **Fixed a real responsive bug**, not just added polish: `Dashboard`'s sidebar+columns and the
+  4-column row both switched to `flex-row` at the *same* `sm:` (640px) breakpoint, so at any
+  tablet-ish width (640–1023px) all 5 (56px sidebar + 4 columns) ended up crammed into one row,
+  each column far too narrow to be usable. Fixed by decoupling the two: the sidebar now joins the
+  columns in a row only at `lg:` (1024px), and the columns themselves are a responsive CSS grid
+  independent of the sidebar — `grid-cols-1` (phone) → `sm:grid-cols-2` (tablet, 2×2) →
+  `xl:grid-cols-4` (desktop, the original 4-across layout). Header also gained `flex-wrap` so the
+  title/level/gold group and the icon-button group don't overflow on very narrow widths.
+  **Caveat, stated plainly:** this was fixed by inspection/reasoning about the breakpoints, not
+  verified against a real narrow-viewport browser session — no Playwright/browser-automation tool
+  was available in the sandbox this was built in (same honesty convention as the untested Docker
+  build). Worth an actual on-device check before considering it fully closed.
+- **Animation/transition polish**, all respecting `prefers-reduced-motion` (the existing global
+  media query in `index.css`, extended to also cover `::backdrop` since `*` doesn't match
+  pseudo-elements):
+  - Native `<dialog>` open/close now fades+scales via `@starting-style` / `transition-behavior:
+    allow-discrete` (the `.app-dialog` class in `index.css`) — plain CSS rather than Tailwind's
+    `open:`/`starting:` variants, since the nesting needed is fiddly to express as utilities.
+    Requires a 2023/2024-era browser (Chrome 117+/Firefox 129+/Safari 17.4+); older browsers just
+    get an instant open/close, no functional loss.
+  - New task cards fade/slide in on mount (`@keyframes task-in`) — since cards are keyed by
+    `task.id`, this only plays for genuinely new tasks, not ones merely reordering from search/
+    filter (React reuses the DOM node for a key match, so no animation fires on reorder).
+  - `Button`, `TagChip`, and the raw score-control buttons in `TaskCard` all get a quick
+    `active:scale-9x` press animation for tactile feedback; `TaskCard` itself gets a subtle
+    `hover:shadow-md` lift.
+
 ## Architecture (decided, don't re-litigate without reason)
 
 - **No custom backend.** Static SPA, built and served by `nginx:alpine` in a single
@@ -269,16 +308,16 @@ exclusion wins). Full spec incl. the revision history: `docs/implementation-plan
    parity. Don't start this without an explicit decision to — see the plan for why.
 6. Docker hardening — healthcheck, multi-arch build, versioned tags, TLS-behind-reverse-proxy notes
 
-**Nothing is queued next.** Phases 1–4 are the "fully usable daily-driver" milestone the original
-plan recommended stopping at (`docs/implementation-plan.md` §6). Remaining scope is Phase 5 (a
-second application's worth of work — RPG/social features — needs an explicit decision to start,
-not a default) and Phase 6 (Docker hardening: the Dockerfile/compose have never been build-tested
-against a real Docker daemon in the sandbox this was built in — see the note in "What Phase 1
-built" above — that's the one concrete gap worth closing even if Phase 5 stays out of scope).
-A dedicated visual-design pass (distinct task-type accents beyond color/icon, animation/transition
-polish, tighter responsive breakpoints tested on a real narrow viewport) is also still open if the
-"modern, intuitive" bar isn't fully met yet — ask the user rather than assuming which of these to
-pick up.
+**Nothing is queued next.** Phases 1–4, the post-Phase-4 fixes (multi-word quick-add tags, task
+search), and the visual/responsive design pass (see above) cover the "fully usable, modern-feeling
+daily-driver" milestone the original plan recommended stopping at (`docs/implementation-plan.md`
+§6). Remaining scope is Phase 5 (a second application's worth of work — RPG/social features —
+needs an explicit decision to start, not a default) and Phase 6 (Docker hardening: the
+Dockerfile/compose have never been build-tested against a real Docker daemon in the sandbox this
+was built in — see the note in "What Phase 1 built" above — that's the one concrete gap worth
+closing even if Phase 5 stays out of scope). The responsive breakpoint fixes in this pass were
+reasoned through, not verified on a real narrow-viewport device/browser (no browser-automation
+tool was available) — worth a real on-device check if anything still looks off.
 
 **Phase 4 has a real backlog now, captured during Phase 2 testing — see
 `docs/implementation-plan.md` §6a before assuming Phase 4 is just "polish":** a universal

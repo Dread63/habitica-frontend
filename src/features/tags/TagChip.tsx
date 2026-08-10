@@ -27,7 +27,10 @@ export function TagChip({ name, state, onClick }: TagChipProps) {
       onClick={onClick}
       aria-pressed={state !== 'neutral'}
       title={`${name} — ${STATE_DESCRIPTION[state]}. Click to cycle.`}
-      className={cn('rounded-full px-2.5 py-1 text-xs font-medium transition-colors', STATE_CLASSES[state])}
+      className={cn(
+        'rounded-full px-2.5 py-1 text-xs font-medium transition-[color,background-color,transform] active:scale-95',
+        STATE_CLASSES[state],
+      )}
     >
       {name}
     </button>

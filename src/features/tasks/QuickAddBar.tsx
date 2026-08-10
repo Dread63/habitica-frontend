@@ -8,6 +8,7 @@ import { useCreateTag } from '@/features/tags/tagMutations'
 import { useCreateTask } from './taskMutations'
 import { parseQuickAdd } from './quickAdd'
 import { PRIORITY_LABELS } from './priority'
+import { TASK_TYPE_META } from './taskType'
 
 /**
  * Resolves typed tag names to IDs, creating any that don't exist yet.
@@ -45,6 +46,8 @@ export function QuickAddBar() {
   const queryClient = useQueryClient()
 
   const parsed = React.useMemo(() => parseQuickAdd(value), [value])
+  const typeMeta = TASK_TYPE_META[parsed.type]
+  const TypeIcon = typeMeta.icon
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -86,7 +89,10 @@ export function QuickAddBar() {
 
       {value.trim() && (
         <div className="flex flex-wrap items-center gap-1.5 pl-6 text-xs text-muted-foreground">
-          <span className="capitalize">{parsed.type}</span>
+          <span className="inline-flex items-center gap-1 font-medium" style={{ color: typeMeta.accent }}>
+            <TypeIcon className="size-3" aria-hidden="true" />
+            {typeMeta.label}
+          </span>
           <span aria-hidden="true">·</span>
           <span>{PRIORITY_LABELS[parsed.priority]}</span>
           {parsed.tagNames.map((name) => (
