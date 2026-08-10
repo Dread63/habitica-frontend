@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* Tailwind v4 defaults to prefers-color-scheme for `dark:`. We use a class
    strategy instead so the three-state (light/dark/system) toggle in
@@ -91,4 +92,19 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/*
+ * Twemoji replaces emoji characters with <img> tags (see
+ * src/lib/useTwemoji.ts) so they render consistently regardless of whether
+ * the host OS has a color-emoji font installed — not something a self-hosted
+ * app serving arbitrary Linux desktops can assume. Sizing them to the
+ * surrounding text, Habitica's own convention.
+ */
+img.emoji {
+  height: 1.2em;
+  width: 1.2em;
+  vertical-align: -0.2em;
+  display: inline-block;
+  margin: 0 0.05em;
 }

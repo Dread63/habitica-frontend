@@ -36,11 +36,28 @@ What Phase 1 built:
   later without conflict — they share the same pattern.
 - `Dockerfile` (multi-stage, `nginx:1.27-alpine`), `nginx.conf` (SPA fallback, immutable caching
   on hashed assets, `/healthz`), `docker-compose.yml`, `.env.example`.
-- **Verified:** `npm run typecheck`, `npm test` (4/4 passing), `npm run build`, `npm run lint`,
-  and a `vite preview` smoke test all pass clean. **Not verified:** the actual `docker build` —
+- **Verified:** `npm run typecheck`, `npm test`, `npm run build`, `npm run lint`, and a
+  `vite preview` smoke test all pass clean. **Not verified:** the actual `docker build` —
   Docker isn't available in the sandbox this was built in. Run `docker compose up --build`
   yourself before trusting the image; the Dockerfile/compose/nginx.conf are correct by inspection
   but that's not the same as a real build.
+
+Phase 1 follow-up fixes (found via a real UI check, not originally scoped tightly enough):
+- `src/features/tasks/taskColor.ts` — Habitica's task-aging color scale (`value` → worst/worse/
+  bad/neutral/good/better/best/purple), ported from `docs/vendor/task-color.getter.js` with exact
+  hex values from `docs/vendor/task-colors.scss` + `task-style.scss` — not approximated. Shown as
+  a `TaskCard` left-border accent. 16 unit tests cover every bucket boundary.
+- Checklist/subtask items now render on `TaskCard` (they didn't at all before).
+- `task.notes` now renders as Markdown (`react-markdown` + `remark-gfm` +
+  `@tailwindcss/typography`'s `prose` classes) instead of plain text — matches Habitica's own
+  behavior (they ship a `markdown.scss`, vendored proof it's real, not assumed).
+- Emoji now render via `@twemoji/api` (`src/lib/useTwemoji.ts`), applied to task text, notes, and
+  checklist items. **This is a deliberate external dependency** — Twemoji fetches emoji images
+  from jsdelivr's CDN, because a self-hosted app can't assume the host OS/browser has a
+  color-emoji font installed (this was the actual root cause: no CSS font-stack trick fixes a
+  genuinely absent emoji font). If that CDN dependency is unwanted later, vendor the Twemoji SVG
+  set into `public/twemoji/` and point `useTwemoji`'s `base` option at it — noted here so it
+  isn't silently forgotten.
 
 ## Architecture (decided, don't re-litigate without reason)
 

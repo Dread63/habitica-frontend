@@ -189,6 +189,27 @@ only meaningful for `frequency: "weekly"`), `streak`, `daysOfMonth[]`, `weeksOfM
 
 `completed` (bool), `collapseChecklist` (bool), `checklist[]` — each item `{id, text, completed, linkId?}`.
 
+### `value` → display color (habits/dailies/todos age visibly — this is not cosmetic, implement it)
+
+`value` isn't just an internal score — it's what makes a neglected habit visibly "redden" and a
+well-kept one "bluen" over time, which is core to how Habitica actually reads at a glance. Ported
+from Habitica's own client (`getTaskColor()`), source vendored at `vendor/task-color.getter.js`;
+hex values from `vendor/task-colors.scss` + `vendor/task-style.scss` (not approximated):
+
+| `value` | Bucket | Accent hex | Text/icon hex |
+|---|---|---|---|
+| `< -20` | worst | `#DE3F3F` | `#6C0406` |
+| `-20 to < -10` | worse | `#FF6165` | `#6C0406` |
+| `-10 to < -1` | bad | `#FF944C` | `#7F3300` |
+| `-1 to < 1` | neutral | `#FFBE5D` | `#794B00` |
+| `1 to < 5` | good | `#24CC8F` | `#005737` |
+| `5 to < 10` | better | `#3BCAD7` | `#005158` |
+| `>= 10` | best | `#50B5E9` | `#033F5E` |
+| any (rewards, or `byHabitica: true`) | purple | `#925CF3` | `#FFFFFF` |
+
+Boundaries are `<`, not `<=` — e.g. exactly `-20` falls into "worse", not "worst". App
+implementation: `src/features/tasks/taskColor.ts` (unit-tested at every boundary).
+
 ### Reward-specific
 
 No extra fields beyond the base — `value` is the gold cost.
@@ -237,5 +258,6 @@ participation — user-created tags are just `{id, name}`.
 | Exact Mongoose field types/enums/defaults for Tag | `vendor/tag.model.js` |
 | User preferences/stats/profile field shapes | `vendor/user.schema.js` |
 | Route definitions + official `@apiSuccessExample` blocks (source of the JSON in `api-examples/`) | `vendor/tasks.controller.js`, `vendor/tags.controller.js` |
-| Full OpenAPI spec (community-maintained, generated from Habitica's docs) | `openapi.yaml` |
+| `value` → display color logic + exact hex values | `vendor/task-color.getter.js`, `vendor/task-colors.scss`, `vendor/task-style.scss` |
+| Full OpenAPI spec (community-maintained, generated from Habitica's docs) | `vendor/openapi.yaml` |
 | Anything not in any of the above | `raw.githubusercontent.com/HabitRPG/habitica/develop/website/server/...` — this URL pattern works with fetch tools; `apidoc.habitica.com` does not |
