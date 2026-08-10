@@ -1,6 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { EMPTY_TAG_FILTER, cycleTagInFilter, removeTagFromFilter, type TagFilterState } from './tagFilter'
+import {
+  EMPTY_TAG_FILTER,
+  cycleTagInFilter,
+  removeTagFromFilter,
+  type TagFilterMode,
+  type TagFilterState,
+} from './tagFilter'
 
 export interface TagFilterPreset {
   id: string
@@ -8,11 +14,15 @@ export interface TagFilterPreset {
   filter: TagFilterState
 }
 
-interface TagFilterStore {
+interface TagFilterStoreState {
   filter: TagFilterState
   presets: TagFilterPreset[]
-  /** neutral -> anyOf -> allOf -> noneOf -> neutral, see tagFilter.ts */
+}
+
+interface TagFilterStore extends TagFilterStoreState {
+  /** neutral -> included -> excluded -> neutral, see tagFilter.ts */
   cycleTag: (tagId: string) => void
+  setMode: (mode: TagFilterMode) => void
   clearFilter: () => void
   /** Called when a tag is deleted — drops it from the active filter and every saved preset. */
   pruneTag: (tagId: string) => void
@@ -20,6 +30,8 @@ interface TagFilterStore {
   applyPreset: (id: string) => void
   deletePreset: (id: string) => void
 }
+
+const STORE_VERSION = 1
 
 /**
  * The one piece of state in this app that genuinely warranted Zustand over
@@ -35,6 +47,8 @@ export const useTagFilterStore = create<TagFilterStore>()(
       presets: [],
 
       cycleTag: (tagId) => set((state) => ({ filter: cycleTagInFilter(state.filter, tagId) })),
+
+      setMode: (mode) => set((state) => ({ filter: { ...state.filter, mode } })),
 
       clearFilter: () => set({ filter: EMPTY_TAG_FILTER }),
 
@@ -59,6 +73,17 @@ export const useTagFilterStore = create<TagFilterStore>()(
 
       deletePreset: (id) => set((state) => ({ presets: state.presets.filter((p) => p.id !== id) })),
     }),
-    { name: 'habitica-frontend:tag-filter' },
+    {
+      name: 'habitica-frontend:tag-filter',
+      version: STORE_VERSION,
+      partialize: (state): TagFilterStoreState => ({ filter: state.filter, presets: state.presets }),
+      // The filter model changed shape mid-Phase-3 (anyOf/allOf/noneOf per-tag
+      // buckets -> one included[] list + a single mode + excluded[]) — see
+      // tagFilter.ts. There's no reasonable lossless migration from the old
+      // per-tag-bucket model to the new single-mode one, and this is
+      // pre-release local state, so a version mismatch just resets to fresh
+      // defaults instead of crashing on the old shape.
+      migrate: (): TagFilterStoreState => ({ filter: EMPTY_TAG_FILTER, presets: [] }),
+    },
   ),
 )

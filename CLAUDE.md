@@ -83,10 +83,9 @@ What Phase 2 built (scoring, create/edit/delete, checklist interactions):
   Phase 4 candidate: show the user's actual gold and disable affordable-check client-side).
 
 What Phase 3 built (the tag filter engine — the feature this project exists for):
-- `src/features/tags/tagFilter.ts` — the pure matching logic described above, plus
-  `cycleTagInFilter` (neutral → anyOf → allOf → noneOf → neutral state transitions) and
-  `removeTagFromFilter`. 29 unit tests, written before any UI touched it, same discipline as
-  `taskColor.ts` in Phase 1.
+- `src/features/tags/tagFilter.ts` — the pure matching logic, plus `cycleTagInFilter` (neutral →
+  included → excluded → neutral state transitions) and `removeTagFromFilter`. 29 unit tests,
+  written before any UI touched it, same discipline as `taskColor.ts` in Phase 1.
 - `src/features/tags/tagFilterStore.ts` — **first real use of Zustand** (installed since Phase 1
   but unused until now; theme/auth used plain Context instead, since they didn't need Zustand's
   `persist` middleware or multi-field update actions the way filter state + presets do).
@@ -95,11 +94,20 @@ What Phase 3 built (the tag filter engine — the feature this project exists fo
   Habitica's server-side cascade locally (strips the tag from cached tasks) and calls the store's
   `pruneTag()` so a deleted tag can't linger in the active filter or a saved preset.
 - `src/features/tags/TagChip.tsx` / `TagFilterSidebar.tsx` / `TagManagerDialog.tsx` — chip click
-  cycles filter state (green/blue/red = OR/AND/exclude, this app's own convention, not
-  Habitica's — they have no equivalent feature); tag administration lives in a **separate**
-  dialog rather than hover-icons on the chips, so the two interactions don't compete for the same
-  click target. Preset naming uses `window.prompt` — same deliberate-placeholder pattern as the
-  delete confirmations elsewhere, real UI to follow in Phase 4.
+  cycles include/exclude state; a **separate, explicit "Match any / Match all" toggle** governs
+  how included tags combine — this app's own convention, not Habitica's (they have no equivalent
+  feature). Tag administration lives in a **separate** dialog rather than hover-icons on the
+  chips, so the two interactions don't compete for the same click target. Preset naming uses
+  `window.prompt` — same deliberate-placeholder pattern as the delete confirmations elsewhere,
+  real UI to follow in Phase 4.
+- **Redesigned once already, post-ship** — the first version used three independent per-tag
+  buckets (anyOf/allOf/noneOf, green/blue/red chips). Testing found a real UX flaw: with only one
+  tag in a bucket, an OR-group and an AND-group are identical, so a green chip and a blue chip
+  looked like they did the same thing until a second tag got added to one of them. Replaced with
+  the single-mode model described above. Full rationale: `docs/implementation-plan.md` §4. If
+  you're reading old context (an earlier commit message, a stale mental model) that mentions
+  `anyOf`/`allOf`/`noneOf` or per-tag AND/OR colors, it's describing the superseded design —
+  `tagFilter.ts` as it exists now is the source of truth.
 - `Dashboard` now renders `TagFilterSidebar` beside the four columns and filters
   `tasksQuery.data` through `filterTasksByTags()` before grouping by type — per-column counts
   reflect the filtered set for free, no extra wiring needed.
@@ -138,19 +146,21 @@ pattern works fine with fetch tools.
 ## The feature that matters most: tag filtering — built in Phase 3
 
 Habitica's own frontend filters tasks by tag with AND-only, include-only logic. This project's
-whole reason to exist (alongside the redesign) is replacing that with three independent buckets —
-**live now**, in `src/features/tags/`:
+whole reason to exist (alongside the redesign) is replacing that — **live now**, in
+`src/features/tags/`:
 
-- `anyOf` — task matches if it has **any** of these tags (OR)
-- `allOf` — task matches only if it has **all** of these tags (AND — Habitica's current behavior, kept as an option)
-- `noneOf` — task is excluded if it has **any** of these tags
+- `included: string[]` — the selected tags
+- `mode: 'any' | 'all'` — one explicit switch controlling whether `included` combines with OR or
+  AND (deliberately *not* encoded per-tag — see the redesign note above for why)
+- `excluded: string[]` — tasks carrying any of these are hidden, regardless of `mode`
 
 Pure client-side filter over the already-fetched task array (`tagFilter.ts`) — `GET /tasks/user`
 has no tag query param and never will (confirmed in `docs/habitica-api.md`), so there was never
 any API interaction to design here, only correct, well-tested filtering logic. 29 tests in
-`tagFilter.test.ts` cover every bucket combination, including a tag landing in more than one
-bucket (shouldn't happen via the normal chip-click cycle, but the matcher is defensive about it
-anyway — exclusion wins). Full original spec: `docs/implementation-plan.md` §4.
+`tagFilter.test.ts`, including a named regression test for the 1-tag-makes-any/all-identical case
+that caused the redesign, and a defensive case for a tag landing in both `included` and
+`excluded` (shouldn't happen via the normal chip-click cycle, but the matcher guards it anyway —
+exclusion wins). Full spec incl. the revision history: `docs/implementation-plan.md` §4.
 
 ## Constraints to never violate
 
@@ -181,7 +191,7 @@ anyway — exclusion wins). Full original spec: `docs/implementation-plan.md` §
 1. ✅ Foundation — Docker/compose skeleton, Vite+React+TS scaffold, API client + rate limiter,
    auth screen, read-only task list (all 4 types), light/dark toggle
 2. ✅ Core interactions — scoring, create/edit/delete, checklists, difficulty/streak display
-3. ✅ **Tag filter engine** — tag CRUD UI + the 3-bucket filter + saved presets
+3. ✅ **Tag filter engine** — tag CRUD UI + the include/exclude filter with an any/all mode + saved presets
 4. Redesign polish — full theming pass, responsive layout, loading/empty states, **+ the §6a
    backlog** (quick-add bar, scoring feedback, expandable detail view, compact density toggle)
 5. *(separately-scoped, optional)* Party/guilds/chat/challenges/market/equipment — full RPG/social

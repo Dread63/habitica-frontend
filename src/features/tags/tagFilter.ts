@@ -1,45 +1,39 @@
 import type { Task } from '@/lib/habitica/types'
 
 /**
- * The feature this whole project exists for (see CLAUDE.md). Habitica's own
- * frontend only supports one bucket — AND-only, include-only. This is three
- * independent buckets instead:
- *
- * - `anyOf` — task matches if it has AT LEAST ONE of these tags (OR)
- * - `allOf` — task matches only if it has ALL of these tags (AND — Habitica's
- *   current-and-only behavior, kept as an option, not removed)
- * - `noneOf` — task is EXCLUDED if it has any of these tags
- *
- * Pure, no React/Zustand/API involved — see tagFilterStore.ts for the
- * stateful wrapper and TagChip.tsx for the UI. Test this file exhaustively
- * before touching either of those; it's the one piece of real business
- * logic in the tag-filter feature.
+ * Redesigned from the original per-tag 3-bucket model (anyOf/allOf/noneOf)
+ * after testing showed the any-vs-all distinction was invisible whenever
+ * each bucket held only one tag — a 1-tag OR-group and a 1-tag AND-group
+ * are mathematically identical, so two differently-colored chips *looked*
+ * like they did the same thing until a second tag was added to one of
+ * them. This version has ONE included-tags list plus a single explicit
+ * mode governing how they combine, so any/all is always its own visible
+ * control rather than something encoded ambiguously per-tag. Trade-off,
+ * made deliberately: you can no longer mix "these are required" with
+ * "any of these work" in a single filter (e.g. "Urgent AND (Home OR
+ * Chores)") — every included tag now combines the same way.
  */
+export type TagFilterMode = 'any' | 'all'
+
 export interface TagFilterState {
-  anyOf: string[]
-  allOf: string[]
-  noneOf: string[]
+  included: string[]
+  mode: TagFilterMode
+  excluded: string[]
 }
 
-export const EMPTY_TAG_FILTER: TagFilterState = { anyOf: [], allOf: [], noneOf: [] }
+export const EMPTY_TAG_FILTER: TagFilterState = { included: [], mode: 'any', excluded: [] }
 
 export function isTagFilterEmpty(filter: TagFilterState): boolean {
-  return filter.anyOf.length === 0 && filter.allOf.length === 0 && filter.noneOf.length === 0
+  return filter.included.length === 0 && filter.excluded.length === 0
 }
 
-/**
- * `noneOf` is checked first and wins over the others — if a tag somehow
- * ends up in both `noneOf` and `anyOf`/`allOf` (shouldn't happen via the
- * normal cycle-through-states UI, which keeps a tag in exactly one bucket,
- * but a saved preset could be hand-edited, or bucket membership could
- * change from tag deletion elsewhere), exclusion is the more specific,
- * more conservative signal and takes priority.
- */
+/** Excluded tags are checked first and always win, regardless of mode. */
 export function taskMatchesTagFilter(task: Pick<Task, 'tags'>, filter: TagFilterState): boolean {
-  if (filter.noneOf.length > 0 && task.tags.some((t) => filter.noneOf.includes(t))) return false
-  if (filter.allOf.length > 0 && !filter.allOf.every((t) => task.tags.includes(t))) return false
-  if (filter.anyOf.length > 0 && !filter.anyOf.some((t) => task.tags.includes(t))) return false
-  return true
+  if (filter.excluded.length > 0 && task.tags.some((t) => filter.excluded.includes(t))) return false
+  if (filter.included.length === 0) return true
+  return filter.mode === 'all'
+    ? filter.included.every((t) => task.tags.includes(t))
+    : filter.included.some((t) => task.tags.includes(t))
 }
 
 export function filterTasksByTags<T extends Pick<Task, 'tags'>>(tasks: T[], filter: TagFilterState): T[] {
@@ -47,13 +41,12 @@ export function filterTasksByTags<T extends Pick<Task, 'tags'>>(tasks: T[], filt
   return tasks.filter((task) => taskMatchesTagFilter(task, filter))
 }
 
-export type TagBucket = 'anyOf' | 'allOf' | 'noneOf'
+export type TagState = 'included' | 'excluded' | 'neutral'
 
-/** Which bucket (if any) a tag currently sits in — for rendering chip state. */
-export function bucketOf(filter: TagFilterState, tagId: string): TagBucket | 'neutral' {
-  if (filter.anyOf.includes(tagId)) return 'anyOf'
-  if (filter.allOf.includes(tagId)) return 'allOf'
-  if (filter.noneOf.includes(tagId)) return 'noneOf'
+/** Which state a tag chip should render as. */
+export function stateOf(filter: TagFilterState, tagId: string): TagState {
+  if (filter.included.includes(tagId)) return 'included'
+  if (filter.excluded.includes(tagId)) return 'excluded'
   return 'neutral'
 }
 
@@ -62,36 +55,32 @@ function without(list: string[], tagId: string): string[] {
 }
 
 /**
- * Pure state transition: neutral -> anyOf (OR) -> allOf (AND) -> noneOf
- * (exclude) -> neutral, on each click of a tag chip. A tag is in at most
- * one bucket at a time (this is how a tag *enters* multiple buckets is
- * prevented — see the noneOf-wins comment on taskMatchesTagFilter for why
- * the matcher still guards against it happening some other way).
+ * Pure state transition: neutral -> included -> excluded -> neutral, on
+ * each click of a tag chip. The any/all mode is a separate, explicit
+ * control (TagFilterSidebar's toggle) — not part of this per-tag cycle.
  */
 export function cycleTagInFilter(filter: TagFilterState, tagId: string): TagFilterState {
-  const current = bucketOf(filter, tagId)
+  const current = stateOf(filter, tagId)
   const cleared: TagFilterState = {
-    anyOf: without(filter.anyOf, tagId),
-    allOf: without(filter.allOf, tagId),
-    noneOf: without(filter.noneOf, tagId),
+    ...filter,
+    included: without(filter.included, tagId),
+    excluded: without(filter.excluded, tagId),
   }
   switch (current) {
     case 'neutral':
-      return { ...cleared, anyOf: [...cleared.anyOf, tagId] }
-    case 'anyOf':
-      return { ...cleared, allOf: [...cleared.allOf, tagId] }
-    case 'allOf':
-      return { ...cleared, noneOf: [...cleared.noneOf, tagId] }
-    case 'noneOf':
+      return { ...cleared, included: [...cleared.included, tagId] }
+    case 'included':
+      return { ...cleared, excluded: [...cleared.excluded, tagId] }
+    case 'excluded':
       return cleared
   }
 }
 
-/** Used when a tag is deleted — drop it from whichever bucket it's in, if any. */
+/** Used when a tag is deleted — drop it from whichever list it's in, if any. */
 export function removeTagFromFilter(filter: TagFilterState, tagId: string): TagFilterState {
   return {
-    anyOf: without(filter.anyOf, tagId),
-    allOf: without(filter.allOf, tagId),
-    noneOf: without(filter.noneOf, tagId),
+    ...filter,
+    included: without(filter.included, tagId),
+    excluded: without(filter.excluded, tagId),
   }
 }

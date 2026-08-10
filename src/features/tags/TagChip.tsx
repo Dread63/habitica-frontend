@@ -1,42 +1,33 @@
 import { cn } from '@/lib/utils'
-import type { TagBucket } from './tagFilter'
+import type { TagState } from './tagFilter'
 
-/**
- * Green/blue/red for OR/AND/exclude is this app's own convention, not
- * Habitica's (they have no equivalent feature) — chosen for a reasonably
- * standard "add / require / remove" association, not pulled from anywhere.
- */
-const BUCKET_CLASSES: Record<TagBucket | 'neutral', string> = {
+const STATE_CLASSES: Record<TagState, string> = {
   neutral: 'border border-border bg-transparent text-muted-foreground hover:bg-muted',
-  anyOf:
-    'border border-transparent bg-green-600 text-white hover:bg-green-700 dark:bg-green-500 dark:hover:bg-green-600',
-  allOf:
-    'border border-transparent bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600',
-  noneOf:
+  included: 'border border-transparent bg-primary text-primary-foreground hover:opacity-90',
+  excluded:
     'border border-transparent bg-red-600 text-white line-through hover:bg-red-700 dark:bg-red-500 dark:hover:bg-red-600',
 }
 
-const BUCKET_DESCRIPTION: Record<TagBucket | 'neutral', string> = {
+const STATE_DESCRIPTION: Record<TagState, string> = {
   neutral: 'not filtered',
-  anyOf: 'matches ANY (OR)',
-  allOf: 'requires ALL (AND)',
-  noneOf: 'excluded',
+  included: 'included in filter',
+  excluded: 'excluded',
 }
 
 interface TagChipProps {
   name: string
-  bucket: TagBucket | 'neutral'
+  state: TagState
   onClick: () => void
 }
 
-export function TagChip({ name, bucket, onClick }: TagChipProps) {
+export function TagChip({ name, state, onClick }: TagChipProps) {
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={bucket !== 'neutral'}
-      title={`${name} — ${BUCKET_DESCRIPTION[bucket]}. Click to cycle.`}
-      className={cn('rounded-full px-2.5 py-1 text-xs font-medium transition-colors', BUCKET_CLASSES[bucket])}
+      aria-pressed={state !== 'neutral'}
+      title={`${name} — ${STATE_DESCRIPTION[state]}. Click to cycle.`}
+      className={cn('rounded-full px-2.5 py-1 text-xs font-medium transition-colors', STATE_CLASSES[state])}
     >
       {name}
     </button>

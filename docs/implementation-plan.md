@@ -53,27 +53,48 @@ Habitica's API is a public REST API meant for third-party clients — you authen
 
 ## 4. The tag filter engine — the actual feature you asked for
 
-Habitica's own frontend only supports "tag is in this set, AND all of them." Replace that with three independent buckets per filter view:
+> **Revised after Phase 3 testing.** The original proposal below this line used three
+> independent per-tag buckets (anyOf/allOf/noneOf, colored green/blue/red). Real use surfaced a
+> UX flaw: with only one tag in a bucket, an OR-group and an AND-group are mathematically
+> identical, so a green chip and a blue chip *looked* like they did the same thing until a
+> second tag was added to one of them — confusing, since nothing in the UI hinted that the
+> distinction only shows up at 2+ tags. Replaced with the model below, kept simpler on purpose:
+> one included-tags list, one explicit any/all mode that applies to all of them, plus a separate
+> exclude list. Trade-off, accepted deliberately: you can no longer mix "these are required" with
+> "any of these work" in a single filter (e.g. the old model could express "Urgent AND (Home OR
+> Chores)" — the new one can't). Implementation: `src/features/tags/tagFilter.ts`.
 
-| Bucket | Semantics | UI cue |
-|---|---|---|
-| `anyOf` | Task matches if it has **at least one** of these tags (OR) | green chip |
-| `allOf` | Task matches only if it has **all** of these tags (AND — this is Habitica's current-and-only behavior) | blue chip |
-| `noneOf` | Task is hidden if it has **any** of these tags (exclude) | red chip |
+Habitica's own frontend only supports "tag is in this set, AND all of them." Replace that with:
+
+| Field | Semantics |
+|---|---|
+| `included: string[]` | The tags currently selected for filtering |
+| `mode: 'any' \| 'all'` | Whether `included` combines with OR or AND — one setting for the whole list, not per-tag |
+| `excluded: string[]` | Tasks carrying any of these are hidden, regardless of `mode` |
 
 A task passes the filter iff:
 
 ```ts
-(anyOf.length === 0 || task.tags.some(t => anyOf.includes(t)))
-  && allOf.every(t => task.tags.includes(t))
-  && !noneOf.some(t => task.tags.includes(t))
+!excluded.some(t => task.tags.includes(t))
+  && (included.length === 0
+    || (mode === 'all' ? included.every(t => task.tags.includes(t)) : included.some(t => task.tags.includes(t))))
 ```
 
 Implementation notes:
-- Pure, memoized function (`useMemo` keyed on `[tasks, anyOf, allOf, noneOf]`) — **no API calls per filter change.** Habitica hands you the full task array up front; filtering is instant, client-only. This also means the whole feature is unaffected by the rate limit.
-- UI: each tag chip in the sidebar cycles neutral → OR (green) → AND (blue) → exclude (red) → neutral on click, with a small legend since a 4-state toggle isn't self-explanatory. Power users can also multi-select via checkboxes in a popover if the click-cycle feels fiddly in testing.
-- Persist named filter presets to `localStorage` (e.g. "Morning routine" = `anyOf: [home, morning]`) so this isn't rebuilt every session.
-- Write this module's logic with **exhaustive unit tests** first (empty buckets, overlapping buckets, a tag in both `anyOf` and `noneOf`, etc.) — it's the one piece of business logic in the whole app worth being paranoid about, and it's fully pure/testable in isolation.
+- Pure function, no memoization trickery needed beyond what `useMemo` already gives the caller —
+  **no API calls per filter change.** Habitica hands you the full task array up front; filtering
+  is instant, client-only. This also means the whole feature is unaffected by the rate limit.
+- UI: each tag chip cycles neutral → included (highlighted) → excluded (red) → neutral on click;
+  a separate, explicit "Match any / Match all" toggle controls how `included` combines — kept
+  out of the per-tag color specifically so the any/all choice is never ambiguous the way it was
+  in the original per-tag-bucket design.
+- Persist named filter presets to `localStorage` (e.g. "Morning routine" = `{included: [home,
+  morning], mode: 'any', excluded: []}`) so this isn't rebuilt every session.
+- Write this module's logic with **exhaustive unit tests** first (empty filter, mode: any, mode:
+  all, excluded alone, included+excluded together, and explicitly the 1-tag degenerate case where
+  any/all collapse to the same result — that case is what motivated the redesign, so it's worth a
+  named regression test, not just implicit coverage) — it's the one piece of business logic in the
+  whole app worth being paranoid about, and it's fully pure/testable in isolation.
 
 ---
 
@@ -92,7 +113,7 @@ Implementation notes:
 | **0 — Spike** (~half day) | Confirm CORS from browser; hit `/user`, `/tasks/user`, `/tags` with curl using a real test account; capture real response JSON | De-risks the "no backend" decision before any app code exists |
 | **1 — Foundation** | Docker/compose skeleton, Vite+React+TS scaffold, API client + rate limiter, auth screen, read-only task list rendering all 4 types, light/dark toggle | First runnable thing |
 | **2 — Core interactions** | Scoring (habit +/−, daily checkbox, todo complete, reward buy), create/edit/delete task, checklists, difficulty/streak display | Matches baseline Habitica task functionality |
-| **3 — Tag filter engine** | Tag CRUD UI + the 3-bucket filter (§4) + saved presets | This is the headline feature you asked for |
+| **3 — Tag filter engine** | Tag CRUD UI + the include/exclude filter with an any/all mode (§4) + saved presets | This is the headline feature you asked for |
 | **4 — Redesign polish** | Full theming pass, responsive layout, transitions, empty/loading states, **+ the interaction-polish backlog below** (§6a) | "Modern and intuitive" lands here |
 | **5 — Stretch: RPG/social parity** *(optional, separate milestone)* | Avatar/equipment, party, guilds, chat, challenges, inbox, quests, market | This alone is bigger than Phases 1–4 combined — see note below |
 | **6 — Docker hardening** | Healthcheck, multi-arch build, versioned tags, README, optional Caddy/Traefik labels for TLS behind a reverse proxy | Ship-readiness |
