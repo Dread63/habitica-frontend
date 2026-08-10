@@ -164,6 +164,27 @@ questions before implementing, not after):
   dashed-border prompt that opens that column's create dialog directly, instead of static
   "Nothing here." text.
 
+Post-Phase-4 fixes from real-world testing:
+- **Quick-add now supports multi-word tag names** (`quickAdd.ts`) — the bare `#tag` form only ever
+  matched `[a-zA-Z0-9_-]+`, so a real tag like "Life + Admin" (spaces, a `+`) couldn't be typed at
+  all. Added a quoted form, `#"Life + Admin"`, alongside the bare form; either can repeat and mix
+  freely in one input. An unterminated `#"` (no closing quote) is deliberately left as literal
+  text rather than guessed at — see `quickAdd.test.ts`'s dedicated describe block.
+- **Task search** (`src/features/tasks/taskSearch.ts` + `TaskSearchBar.tsx`) — a separate input
+  stacked directly below `QuickAddBar` (deliberately not the same field: quick-add's Enter key
+  creates a task, and overloading that with search's Enter behavior would be ambiguous).
+  Case-insensitive substring match against task title, any checklist/subtask item's text, and
+  notes; a task matching more than one of those reports only its *highest* tier. Results within
+  each column are sorted title-matches first, then checklist-matches, then notes-only matches,
+  ties keeping their original order (relies on `Array.sort` being stable, ES2019+). Composed in
+  `Dashboard.tsx` *after* `filterTasksByTags()` — tag filter narrows the set, search narrows and
+  reorders what's left — and an empty/whitespace query is a total no-op (returns the same array
+  reference, no reorder), so search is invisible until you actually type something.
+  `TaskColumn` takes a new `isFiltered` prop (true when either the tag filter or the search query
+  is active) so a column filtered/searched to zero results shows a plain "No matches." instead of
+  the normal empty-column "Nothing here — add one" prompt, which would otherwise misleadingly
+  suggest the column has no tasks at all.
+
 ## Architecture (decided, don't re-litigate without reason)
 
 - **No custom backend.** Static SPA, built and served by `nginx:alpine` in a single

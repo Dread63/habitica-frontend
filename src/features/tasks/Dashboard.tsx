@@ -6,13 +6,15 @@ import { DensityToggle } from '@/features/theme/DensityToggle'
 import { useAuth } from '@/features/auth/AuthProvider'
 import { TagFilterSidebar } from '@/features/tags/TagFilterSidebar'
 import { useTagFilterStore } from '@/features/tags/tagFilterStore'
-import { filterTasksByTags } from '@/features/tags/tagFilter'
+import { filterTasksByTags, isTagFilterEmpty } from '@/features/tags/tagFilter'
 import { useUser } from '@/features/user/useUser'
 import { useTasks } from './useTasks'
 import { useTags } from './useTags'
 import { TaskColumn } from './TaskColumn'
 import { QuickAddBar } from './QuickAddBar'
+import { TaskSearchBar } from './TaskSearchBar'
 import { TaskListSkeleton } from './TaskListSkeleton'
+import { searchTasks } from './taskSearch'
 import type { Task } from '@/lib/habitica/types'
 
 const COLUMNS: { type: Task['type']; title: string }[] = [
@@ -31,6 +33,7 @@ export function Dashboard() {
   // both of which read this cache for a before/after stats diff.
   const userQuery = useUser()
   const tagFilter = useTagFilterStore((s) => s.filter)
+  const [searchQuery, setSearchQuery] = React.useState('')
 
   const tagNamesById = React.useMemo(() => {
     const map = new Map<string, string>()
@@ -38,12 +41,15 @@ export function Dashboard() {
     return map
   }, [tagsQuery.data])
 
+  const isFiltered = !isTagFilterEmpty(tagFilter) || searchQuery.trim().length > 0
+
   const tasksByType = React.useMemo(() => {
     const grouped: Record<Task['type'], Task[]> = { habit: [], daily: [], todo: [], reward: [] }
-    const filtered = filterTasksByTags(tasksQuery.data ?? [], tagFilter)
-    for (const task of filtered) grouped[task.type].push(task)
+    const byTag = filterTasksByTags(tasksQuery.data ?? [], tagFilter)
+    const bySearch = searchTasks(byTag, searchQuery)
+    for (const task of bySearch) grouped[task.type].push(task)
     return grouped
-  }, [tasksQuery.data, tagFilter])
+  }, [tasksQuery.data, tagFilter, searchQuery])
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-7xl flex-col gap-6 p-4 sm:p-6">
@@ -65,7 +71,10 @@ export function Dashboard() {
         </div>
       </header>
 
-      <QuickAddBar />
+      <div className="flex flex-col gap-2">
+        <QuickAddBar />
+        <TaskSearchBar value={searchQuery} onChange={setSearchQuery} />
+      </div>
 
       {tasksQuery.isPending && <TaskListSkeleton />}
 
@@ -92,6 +101,7 @@ export function Dashboard() {
                 title={title}
                 tasks={tasksByType[type]}
                 tagNamesById={tagNamesById}
+                isFiltered={isFiltered}
               />
             ))}
           </div>

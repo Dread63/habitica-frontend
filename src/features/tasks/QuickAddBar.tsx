@@ -77,7 +77,7 @@ export function QuickAddBar() {
         <Input
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Add a task… #tag  /habit /daily /reward  ! medium  !! hard  ~ trivial"
+          placeholder={'Add a task… #tag or #"multi word tag"  /habit /daily /reward  ! medium  !! hard  ~ trivial'}
           disabled={isSubmitting}
           aria-label="Quick add task"
           className="flex-1"

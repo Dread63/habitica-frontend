@@ -33,6 +33,42 @@ describe('parseQuickAdd', () => {
       expect(result.tagNames).toEqual([])
       expect(result.text).toBe('Room#42 needs cleaning')
     })
+
+    describe('quoted tags — the fix for tag names with spaces (e.g. "Life + Admin")', () => {
+      it('parses a quoted multi-word tag', () => {
+        const result = parseQuickAdd('Pay rent #"Life + Admin"')
+        expect(result.text).toBe('Pay rent')
+        expect(result.tagNames).toEqual(['Life + Admin'])
+      })
+
+      it('mixes quoted and bare tags in one input', () => {
+        const result = parseQuickAdd('Pay rent #"Life + Admin" #urgent')
+        expect(result.text).toBe('Pay rent')
+        expect(result.tagNames).toEqual(['Life + Admin', 'urgent'])
+      })
+
+      it('a quoted tag can appear anywhere in the input', () => {
+        const result = parseQuickAdd('#"Life + Admin" Pay rent')
+        expect(result.text).toBe('Pay rent')
+        expect(result.tagNames).toEqual(['Life + Admin'])
+      })
+
+      it('preserves internal punctuation/spacing exactly as typed', () => {
+        expect(parseQuickAdd('Task #"a, b & c"').tagNames).toEqual(['a, b & c'])
+      })
+
+      it('an unterminated quote is left as literal text, not guessed at', () => {
+        const result = parseQuickAdd('Pay rent #"Life + Admin')
+        expect(result.tagNames).toEqual([])
+        expect(result.text).toBe('Pay rent #"Life + Admin')
+      })
+
+      it('an empty quoted tag (#"") is not parsed as a token', () => {
+        const result = parseQuickAdd('Task #""')
+        expect(result.tagNames).toEqual([])
+        expect(result.text).toBe('Task #""')
+      })
+    })
   })
 
   describe('type (/)', () => {

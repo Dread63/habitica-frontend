@@ -10,9 +10,16 @@ interface TaskColumnProps {
   title: string
   tasks: Task[]
   tagNamesById: ReadonlyMap<string, string>
+  /**
+   * True when a tag filter and/or search query is currently narrowing the
+   * task list. Distinguishes a genuinely empty column (offer to add a task)
+   * from one that's merely filtered/searched down to zero matches, where
+   * "add one" would be a misleading thing to suggest.
+   */
+  isFiltered: boolean
 }
 
-export function TaskColumn({ type, title, tasks, tagNamesById }: TaskColumnProps) {
+export function TaskColumn({ type, title, tasks, tagNamesById, isFiltered }: TaskColumnProps) {
   const createDialogRef = React.useRef<TaskEditorHandle>(null)
 
   return (
@@ -33,7 +40,13 @@ export function TaskColumn({ type, title, tasks, tagNamesById }: TaskColumnProps
         </Button>
       </div>
       <div className="flex flex-col gap-2">
-        {tasks.length === 0 && (
+        {tasks.length === 0 && isFiltered && (
+          <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-border px-3 py-6 text-center">
+            <Inbox className="size-5 text-muted-foreground/50" />
+            <span className="text-xs text-muted-foreground">No matches.</span>
+          </div>
+        )}
+        {tasks.length === 0 && !isFiltered && (
           <button
             type="button"
             onClick={() => createDialogRef.current?.open()}
