@@ -163,3 +163,11 @@ Next up: **Phase 3** — tag CRUD UI + the `anyOf`/`allOf`/`noneOf` filter engin
 plus saved filter presets. The filter function itself should be a pure, exhaustively-tested
 module *before* any UI is built around it — same pattern `taskColor.ts`/`taskColor.test.ts`
 already established in this codebase.
+
+**Phase 4 has a real backlog now, captured during Phase 2 testing — see
+`docs/implementation-plan.md` §6a before assuming Phase 4 is just "polish":** a universal
+keyboard quick-add bar (needs a syntax design decision, not just code — don't invent the symbols
+without checking), reward/XP feedback on scoring (data already available in `ScoreTaskResult`,
+just needs a toast/flash), a verify-then-maybe-fix item on task-color update timing after
+scoring, an expandable read-focused task detail view (distinct from the edit form), and a
+persisted compact/condensed density toggle. Default order is after Phase 3, not blocked on it.
