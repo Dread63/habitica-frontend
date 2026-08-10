@@ -6,8 +6,8 @@ frontend only supports AND-only include). Full design rationale: `docs/implement
 
 ## Status
 
-**Phase 0, 1, and 2 are done.** Start at Phase 3 (the tag filter engine — see the dedicated
-section below). See `docs/implementation-plan.md` §6 for the full phase breakdown.
+**Phase 0, 1, 2, and 3 are done.** Start at Phase 4 (redesign polish + the backlog in §6a of
+`docs/implementation-plan.md`). See that doc's §6 for the full phase breakdown.
 
 What Phase 0 established:
 - **CORS is open** on the Habitica API (`access-control-allow-origin: *`, verified via a live
@@ -82,6 +82,32 @@ What Phase 2 built (scoring, create/edit/delete, checklist interactions):
   check before letting a reward purchase attempt fire (the server will 400 on insufficient gold;
   Phase 4 candidate: show the user's actual gold and disable affordable-check client-side).
 
+What Phase 3 built (the tag filter engine — the feature this project exists for):
+- `src/features/tags/tagFilter.ts` — the pure matching logic described above, plus
+  `cycleTagInFilter` (neutral → anyOf → allOf → noneOf → neutral state transitions) and
+  `removeTagFromFilter`. 29 unit tests, written before any UI touched it, same discipline as
+  `taskColor.ts` in Phase 1.
+- `src/features/tags/tagFilterStore.ts` — **first real use of Zustand** (installed since Phase 1
+  but unused until now; theme/auth used plain Context instead, since they didn't need Zustand's
+  `persist` middleware or multi-field update actions the way filter state + presets do).
+  Persisted to `localStorage` under `habitica-frontend:tag-filter`.
+- `src/features/tags/tagMutations.ts` — tag create/rename/delete/reorder. Delete mirrors
+  Habitica's server-side cascade locally (strips the tag from cached tasks) and calls the store's
+  `pruneTag()` so a deleted tag can't linger in the active filter or a saved preset.
+- `src/features/tags/TagChip.tsx` / `TagFilterSidebar.tsx` / `TagManagerDialog.tsx` — chip click
+  cycles filter state (green/blue/red = OR/AND/exclude, this app's own convention, not
+  Habitica's — they have no equivalent feature); tag administration lives in a **separate**
+  dialog rather than hover-icons on the chips, so the two interactions don't compete for the same
+  click target. Preset naming uses `window.prompt` — same deliberate-placeholder pattern as the
+  delete confirmations elsewhere, real UI to follow in Phase 4.
+- `Dashboard` now renders `TagFilterSidebar` beside the four columns and filters
+  `tasksQuery.data` through `filterTasksByTags()` before grouping by type — per-column counts
+  reflect the filtered set for free, no extra wiring needed.
+- **Bundle size note:** the production build now warns about a >500KB JS chunk (was under 500KB
+  through Phase 2). Not a problem yet (~155KB gzipped), but if it keeps growing — Phase 5's scope
+  in particular — code-splitting (lazy-load dialogs, split vendor chunks) is worth revisiting
+  rather than ignoring the warning indefinitely.
+
 ## Architecture (decided, don't re-litigate without reason)
 
 - **No custom backend.** Static SPA, built and served by `nginx:alpine` in a single
@@ -109,20 +135,22 @@ is already vendored into `docs/`. If something's genuinely missing, fetch raw so
 `raw.githubusercontent.com/HabitRPG/habitica/develop/website/server/...` instead — that URL
 pattern works fine with fetch tools.
 
-## The feature that matters most: tag filtering
+## The feature that matters most: tag filtering — built in Phase 3
 
 Habitica's own frontend filters tasks by tag with AND-only, include-only logic. This project's
-whole reason to exist (alongside the redesign) is replacing that with three independent buckets:
+whole reason to exist (alongside the redesign) is replacing that with three independent buckets —
+**live now**, in `src/features/tags/`:
 
 - `anyOf` — task matches if it has **any** of these tags (OR)
 - `allOf` — task matches only if it has **all** of these tags (AND — Habitica's current behavior, kept as an option)
 - `noneOf` — task is excluded if it has **any** of these tags
 
-This is a **pure client-side filter** over the already-fetched task array — `GET /tasks/user`
-has no tag query param and never will (confirmed in `docs/habitica-api.md`), so there is no API
-interaction to design here, only correct, well-tested filtering logic. Full spec:
-`docs/implementation-plan.md` §4. Write this module's unit tests exhaustively (empty buckets,
-overlapping buckets, a tag present in both `anyOf` and `noneOf`) before building UI around it.
+Pure client-side filter over the already-fetched task array (`tagFilter.ts`) — `GET /tasks/user`
+has no tag query param and never will (confirmed in `docs/habitica-api.md`), so there was never
+any API interaction to design here, only correct, well-tested filtering logic. 29 tests in
+`tagFilter.test.ts` cover every bucket combination, including a tag landing in more than one
+bucket (shouldn't happen via the normal chip-click cycle, but the matcher is defensive about it
+anyway — exclusion wins). Full original spec: `docs/implementation-plan.md` §4.
 
 ## Constraints to never violate
 
@@ -150,19 +178,17 @@ overlapping buckets, a tag present in both `anyOf` and `noneOf`) before building
 
 ## Phase roadmap (from the implementation plan)
 
-1. Foundation — Docker/compose skeleton, Vite+React+TS scaffold, API client + rate limiter, auth
-   screen, read-only task list (all 4 types), light/dark toggle
-2. Core interactions — scoring, create/edit/delete, checklists, difficulty/streak display
-3. **Tag filter engine** — tag CRUD UI + the 3-bucket filter + saved presets
-4. Redesign polish — full theming pass, responsive layout, loading/empty states
+1. ✅ Foundation — Docker/compose skeleton, Vite+React+TS scaffold, API client + rate limiter,
+   auth screen, read-only task list (all 4 types), light/dark toggle
+2. ✅ Core interactions — scoring, create/edit/delete, checklists, difficulty/streak display
+3. ✅ **Tag filter engine** — tag CRUD UI + the 3-bucket filter + saved presets
+4. Redesign polish — full theming pass, responsive layout, loading/empty states, **+ the §6a
+   backlog** (quick-add bar, scoring feedback, expandable detail view, compact density toggle)
 5. *(separately-scoped, optional)* Party/guilds/chat/challenges/market/equipment — full RPG/social
    parity. Don't start this without an explicit decision to — see the plan for why.
 6. Docker hardening — healthcheck, multi-arch build, versioned tags, TLS-behind-reverse-proxy notes
 
-Next up: **Phase 3** — tag CRUD UI + the `anyOf`/`allOf`/`noneOf` filter engine described above,
-plus saved filter presets. The filter function itself should be a pure, exhaustively-tested
-module *before* any UI is built around it — same pattern `taskColor.ts`/`taskColor.test.ts`
-already established in this codebase.
+Next up: **Phase 4.**
 
 **Phase 4 has a real backlog now, captured during Phase 2 testing — see
 `docs/implementation-plan.md` §6a before assuming Phase 4 is just "polish":** a universal

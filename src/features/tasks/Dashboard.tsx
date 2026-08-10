@@ -3,6 +3,9 @@ import { LogOut } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { useAuth } from '@/features/auth/AuthProvider'
+import { TagFilterSidebar } from '@/features/tags/TagFilterSidebar'
+import { useTagFilterStore } from '@/features/tags/tagFilterStore'
+import { filterTasksByTags } from '@/features/tags/tagFilter'
 import { useTasks } from './useTasks'
 import { useTags } from './useTags'
 import { TaskColumn } from './TaskColumn'
@@ -19,6 +22,7 @@ export function Dashboard() {
   const { logout } = useAuth()
   const tasksQuery = useTasks()
   const tagsQuery = useTags()
+  const tagFilter = useTagFilterStore((s) => s.filter)
 
   const tagNamesById = React.useMemo(() => {
     const map = new Map<string, string>()
@@ -28,12 +32,13 @@ export function Dashboard() {
 
   const tasksByType = React.useMemo(() => {
     const grouped: Record<Task['type'], Task[]> = { habit: [], daily: [], todo: [], reward: [] }
-    for (const task of tasksQuery.data ?? []) grouped[task.type].push(task)
+    const filtered = filterTasksByTags(tasksQuery.data ?? [], tagFilter)
+    for (const task of filtered) grouped[task.type].push(task)
     return grouped
-  }, [tasksQuery.data])
+  }, [tasksQuery.data, tagFilter])
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-6xl flex-col gap-6 p-4 sm:p-6">
+    <div className="mx-auto flex min-h-dvh max-w-7xl flex-col gap-6 p-4 sm:p-6">
       <header className="flex items-center justify-between">
         <h1 className="text-lg font-semibold">Habitica</h1>
         <div className="flex items-center gap-2">
@@ -54,9 +59,18 @@ export function Dashboard() {
 
       {tasksQuery.isSuccess && (
         <div className="flex flex-col gap-6 sm:flex-row">
-          {COLUMNS.map(({ type, title }) => (
-            <TaskColumn key={type} type={type} title={title} tasks={tasksByType[type]} tagNamesById={tagNamesById} />
-          ))}
+          <TagFilterSidebar />
+          <div className="flex min-w-0 flex-1 flex-col gap-6 sm:flex-row">
+            {COLUMNS.map(({ type, title }) => (
+              <TaskColumn
+                key={type}
+                type={type}
+                title={title}
+                tasks={tasksByType[type]}
+                tagNamesById={tagNamesById}
+              />
+            ))}
+          </div>
         </div>
       )}
     </div>
