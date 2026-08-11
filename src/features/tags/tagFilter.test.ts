@@ -1,12 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
   EMPTY_TAG_FILTER,
-  cycleTagInFilter,
   filterTasksByTags,
   isTagFilterEmpty,
   removeTagFromFilter,
   stateOf,
   taskMatchesTagFilter,
+  toggleExcluded,
+  toggleIncluded,
   type TagFilterState,
 } from './tagFilter'
 
@@ -149,41 +150,63 @@ describe('stateOf', () => {
   })
 })
 
-describe('cycleTagInFilter', () => {
-  it('walks neutral -> included -> excluded -> neutral for one tag', () => {
+describe('toggleIncluded', () => {
+  it('is a plain 2-state toggle: neutral -> included -> neutral', () => {
     let filter = EMPTY_TAG_FILTER
     expect(stateOf(filter, HOME)).toBe('neutral')
 
-    filter = cycleTagInFilter(filter, HOME)
+    filter = toggleIncluded(filter, HOME)
     expect(stateOf(filter, HOME)).toBe('included')
 
-    filter = cycleTagInFilter(filter, HOME)
-    expect(stateOf(filter, HOME)).toBe('excluded')
-
-    filter = cycleTagInFilter(filter, HOME)
+    filter = toggleIncluded(filter, HOME)
     expect(stateOf(filter, HOME)).toBe('neutral')
     expect(filter).toEqual(EMPTY_TAG_FILTER)
   })
 
-  it('preserves the current mode across the cycle', () => {
+  it('toggling a currently-excluded tag goes straight to included, not neutral first', () => {
+    const filter: TagFilterState = { included: [], mode: 'any', excluded: [HOME] }
+    const next = toggleIncluded(filter, HOME)
+    expect(next.excluded).not.toContain(HOME)
+    expect(next.included).toContain(HOME)
+  })
+
+  it('preserves the current mode', () => {
     let filter: TagFilterState = { included: [], mode: 'all', excluded: [] }
-    filter = cycleTagInFilter(filter, HOME)
+    filter = toggleIncluded(filter, HOME)
     expect(filter.mode).toBe('all')
-    filter = cycleTagInFilter(filter, HOME)
+    filter = toggleIncluded(filter, HOME)
     expect(filter.mode).toBe('all')
   })
 
-  it('a tag is only ever in exactly one of included/excluded at a time', () => {
-    let filter = cycleTagInFilter(EMPTY_TAG_FILTER, HOME) // included
-    filter = cycleTagInFilter(filter, HOME) // excluded
-    expect(filter.included).not.toContain(HOME)
-    expect(filter.excluded).toContain(HOME)
+  it('does not disturb other tags already placed', () => {
+    const filter: TagFilterState = { included: [WORK], mode: 'any', excluded: [URGENT] }
+    const next = toggleIncluded(filter, HOME)
+    expect(next).toEqual({ included: [WORK, HOME], mode: 'any', excluded: [URGENT] })
+  })
+})
+
+describe('toggleExcluded', () => {
+  it('is a plain 2-state toggle: neutral -> excluded -> neutral', () => {
+    let filter = EMPTY_TAG_FILTER
+    filter = toggleExcluded(filter, HOME)
+    expect(stateOf(filter, HOME)).toBe('excluded')
+
+    filter = toggleExcluded(filter, HOME)
+    expect(stateOf(filter, HOME)).toBe('neutral')
+    expect(filter).toEqual(EMPTY_TAG_FILTER)
   })
 
-  it('cycling one tag does not disturb other tags already placed', () => {
-    let filter: TagFilterState = { included: [WORK], mode: 'any', excluded: [URGENT] }
-    filter = cycleTagInFilter(filter, HOME) // HOME: neutral -> included
-    expect(filter).toEqual({ included: [WORK, HOME], mode: 'any', excluded: [URGENT] })
+  it('toggling a currently-included tag goes straight to excluded, not neutral first', () => {
+    const filter: TagFilterState = { included: [HOME], mode: 'any', excluded: [] }
+    const next = toggleExcluded(filter, HOME)
+    expect(next.included).not.toContain(HOME)
+    expect(next.excluded).toContain(HOME)
+  })
+
+  it('does not disturb other tags already placed', () => {
+    const filter: TagFilterState = { included: [WORK], mode: 'any', excluded: [] }
+    const next = toggleExcluded(filter, HOME)
+    expect(next).toEqual({ included: [WORK], mode: 'any', excluded: [HOME] })
   })
 })
 

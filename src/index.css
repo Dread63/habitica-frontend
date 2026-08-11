@@ -23,24 +23,25 @@
 }
 
 /*
- * Design tokens.
- *
- * Neutrals are biased slightly cool/toward-teal rather than pure gray, to
- * read as chosen rather than default, and to sit comfortably next to the
- * primary accent. Font stack is the native system-ui stack, deliberately:
- * this is a self-hosted daily-driver tool, not a marketing page, and a
- * system font avoids a webfont fetch on every load of an app people may
- * open dozens of times a day.
+ * Design tokens — a "Proton Carbon" direction: a clean violet accent on
+ * near-black (dark) / soft off-white (light) neutrals, replacing the
+ * original teal (it read as green in menus/selection states — direct
+ * feedback, not a stylistic whim). Neutrals lean slightly cool/violet
+ * rather than pure gray, same reasoning as before: read as chosen, sit
+ * comfortably next to the accent. Font stack is the native system-ui
+ * stack, deliberately: this is a self-hosted daily-driver tool, not a
+ * marketing page, and a system font avoids a webfont fetch on every load of
+ * an app people may open dozens of times a day.
  */
 :root {
-  --background: #f6f7f9;
-  --foreground: #14181f;
+  --background: #f7f6fb;
+  --foreground: #17151f;
   --card: #ffffff;
-  --card-foreground: #14181f;
-  --border: #e2e5ea;
-  --muted: #eef0f3;
-  --muted-foreground: #6b7280;
-  --primary: #0e9c93;
+  --card-foreground: #17151f;
+  --border: #e4e1ee;
+  --muted: #efedf7;
+  --muted-foreground: #6b6580;
+  --primary: #6d4aff;
   --primary-foreground: #ffffff;
   --destructive: #c0362c;
   --destructive-foreground: #ffffff;
@@ -48,34 +49,22 @@
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-/* OS-level dark preference applies unless the user explicitly chose light. */
-@media (prefers-color-scheme: dark) {
-  :root:not(.light) {
-    --background: #0f1417;
-    --foreground: #e7eaee;
-    --card: #171d21;
-    --card-foreground: #e7eaee;
-    --border: #262e33;
-    --muted: #1d2327;
-    --muted-foreground: #929ca6;
-    --primary: #2dd4c7;
-    --primary-foreground: #06201d;
-    --destructive: #e5675c;
-    --destructive-foreground: #250705;
-  }
-}
-
-/* Explicit user choice always wins, in both directions. */
+/* ThemeProvider always resolves 'system' to an explicit .light/.dark class
+   on <html> (see its own comment for why this used to be a media-query-only
+   toggle here and what that silently broke: every `dark:` Tailwind utility
+   is class-based, not media-query-based, since our @custom-variant above is
+   a pure class selector). So this is the only dark-mode rule needed — no
+   parallel `@media (prefers-color-scheme: dark)` block. */
 .dark {
-  --background: #0f1417;
-  --foreground: #e7eaee;
-  --card: #171d21;
-  --card-foreground: #e7eaee;
-  --border: #262e33;
-  --muted: #1d2327;
-  --muted-foreground: #929ca6;
-  --primary: #2dd4c7;
-  --primary-foreground: #06201d;
+  --background: #0b0a11;
+  --foreground: #eeecf5;
+  --card: #16151f;
+  --card-foreground: #eeecf5;
+  --border: #2a2836;
+  --muted: #1c1b26;
+  --muted-foreground: #9691a8;
+  --primary: #8d72ff;
+  --primary-foreground: #0e0a24;
   --destructive: #e5675c;
   --destructive-foreground: #250705;
 }
@@ -113,23 +102,34 @@ body {
  * Browser support: @starting-style + allow-discrete is Chrome 117+/Firefox
  * 129+/Safari 17.4+ (2023-2024). Older browsers just skip the transition —
  * the dialog still opens/closes instantly, no functional loss.
+ *
+ * The open transition uses a gentle back-out easing (a slight overshoot
+ * past scale(1) before settling) rather than plain ease-out — closer to the
+ * bit of "pop" habitica.com's own modals have instead of a flat fade. Close
+ * keeps a plain ease-out: overshooting on the way *out* would read as a
+ * glitch, not polish.
  */
 .app-dialog {
-  transform: translate(-50%, -50%) scale(0.96);
+  transform: translate(-50%, -50%) scale(0.94);
   opacity: 0;
   transition:
-    opacity 150ms ease-out,
-    transform 150ms ease-out,
-    overlay 150ms ease-out allow-discrete,
-    display 150ms ease-out allow-discrete;
+    opacity 180ms ease-out,
+    transform 180ms ease-out,
+    overlay 180ms ease-out allow-discrete,
+    display 180ms ease-out allow-discrete;
 }
 .app-dialog[open] {
   transform: translate(-50%, -50%) scale(1);
   opacity: 1;
+  transition:
+    opacity 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    overlay 220ms allow-discrete,
+    display 220ms allow-discrete;
 }
 @starting-style {
   .app-dialog[open] {
-    transform: translate(-50%, -50%) scale(0.96);
+    transform: translate(-50%, -50%) scale(0.94);
     opacity: 0;
   }
 }

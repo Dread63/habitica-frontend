@@ -9,12 +9,14 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
+import { emojify } from '@/lib/emoji'
 import { useTwemoji } from '@/lib/useTwemoji'
 import { useCreateTask, useUpdateTask } from './taskMutations'
 import { useTags } from './useTags'
 import { PRIORITY_LABELS } from './priority'
 import { ChecklistSection } from './ChecklistSection'
 import { TASK_TYPE_META } from './taskType'
+import { formatDueDate, getDueDate } from './taskDueDate'
 import type { CreateTaskInput, DailyRepeat, Task, TaskPriority, TaskType } from '@/lib/habitica/types'
 
 const DAY_KEYS: (keyof DailyRepeat)[] = ['su', 'm', 't', 'w', 'th', 'f', 's']
@@ -163,6 +165,7 @@ export const TaskEditorDialog = React.forwardRef<TaskEditorHandle, TaskEditorDia
       ref={dialogRef}
       title={title}
       icon={<TypeIcon className="size-4" style={{ color: accent }} aria-hidden="true" />}
+      size="lg"
     >
       {showForm ? (
         <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
@@ -330,35 +333,134 @@ export const TaskEditorDialog = React.forwardRef<TaskEditorHandle, TaskEditorDia
 })
 TaskEditorDialog.displayName = 'TaskEditorDialog'
 
-/** The read-focused layout requested explicitly — full-width markdown, full
+/**
+ * The read-focused layout requested explicitly — full-width markdown, full
  * checklist, no card-sized truncation. Checklist stays interactive (reuses
  * the same ChecklistSection as the compact card) since there was no reason
- * to make this view read-only when the mutations already existed. */
+ * to make this view read-only when the mutations already existed.
+ *
+ * Title and notes are editable in place here (click the rendered text,
+ * type, blur/Enter to save, Esc to revert) — "a viewable/editable manner
+ * that can be easily written in" was the explicit ask, and those two are
+ * the fields actually being *written*. Everything else (difficulty, tags,
+ * habit/daily/todo-specific settings) still routes through the full form
+ * via the button below — those are selects/checkboxes, not prose, so a
+ * structured form is still the right tool for them.
+ */
 function TaskDetailView({ task, tagNames, onEdit }: { task: Task; tagNames: string[]; onEdit: () => void }) {
   const textRef = useTwemoji<HTMLHeadingElement>([task.text])
   const notesRef = useTwemoji<HTMLDivElement>([task.notes])
   const checklist = 'checklist' in task ? task.checklist : undefined
+  const updateTask = useUpdateTask()
+  const dueDate = getDueDate(task)
+
+  const [editingField, setEditingField] = React.useState<'text' | 'notes' | null>(null)
+  const [textDraft, setTextDraft] = React.useState(task.text)
+  const [notesDraft, setNotesDraft] = React.useState(task.notes)
+
+  // Stay in sync with the authoritative task once it changes (e.g. after
+  // this save lands, or an unrelated background refetch) — but never while
+  // the field is actively being typed into, so an in-flight edit is never
+  // silently clobbered out from under the user.
+  React.useEffect(() => {
+    if (editingField !== 'text') setTextDraft(task.text)
+  }, [task.text, editingField])
+  React.useEffect(() => {
+    if (editingField !== 'notes') setNotesDraft(task.notes)
+  }, [task.notes, editingField])
+
+  function commitText() {
+    setEditingField(null)
+    const trimmed = textDraft.trim()
+    if (trimmed && trimmed !== task.text) updateTask.mutate({ taskId: task.id, input: { text: trimmed } })
+    else setTextDraft(task.text)
+  }
+
+  function commitNotes() {
+    setEditingField(null)
+    if (notesDraft !== task.notes) updateTask.mutate({ taskId: task.id, input: { notes: notesDraft } })
+  }
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-start justify-between gap-2">
-        <h3 ref={textRef} className="text-base leading-snug font-semibold">
-          {task.text}
-        </h3>
-        <Button type="button" variant="outline" size="sm" onClick={onEdit} className="shrink-0">
-          <Pencil className="size-3" /> Edit
+        {editingField === 'text' ? (
+          <Input
+            autoFocus
+            value={textDraft}
+            onChange={(e) => setTextDraft(e.target.value)}
+            onBlur={commitText}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitText()
+              } else if (e.key === 'Escape') {
+                setTextDraft(task.text)
+                setEditingField(null)
+              }
+            }}
+            className="text-base font-semibold"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setEditingField('text')}
+            aria-label="Edit title"
+            className="min-w-0 flex-1 rounded text-left"
+          >
+            <h3 ref={textRef} className="text-base leading-snug font-semibold">
+              {emojify(task.text)}
+            </h3>
+          </button>
+        )}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onEdit}
+          title="Difficulty, tags, and other settings"
+          className="shrink-0"
+        >
+          <Pencil className="size-3" /> More fields
         </Button>
       </div>
 
-      {task.notes ? (
+      {editingField === 'notes' ? (
+        <Textarea
+          autoFocus
+          value={notesDraft}
+          onChange={(e) => setNotesDraft(e.target.value)}
+          onBlur={commitNotes}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setNotesDraft(task.notes)
+              setEditingField(null)
+            }
+          }}
+          placeholder="Markdown supported"
+          rows={10}
+          className="min-h-40"
+        />
+      ) : task.notes ? (
         <div
           ref={notesRef}
-          className="prose prose-sm dark:prose-invert prose-a:text-primary max-w-none"
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('a')) return // let the link navigate instead of entering edit mode
+            setEditingField('notes')
+          }}
+          title="Click to edit"
+          className="prose prose-sm dark:prose-invert prose-a:text-primary max-w-none cursor-text rounded hover:bg-muted/40"
         >
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.notes}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{emojify(task.notes)}</ReactMarkdown>
         </div>
       ) : (
-        <p className="text-sm text-muted-foreground">No notes.</p>
+        <button
+          type="button"
+          onClick={() => setEditingField('notes')}
+          className="rounded text-left text-sm text-muted-foreground hover:text-foreground"
+        >
+          No notes — click to add some.
+        </button>
       )}
 
       {checklist !== undefined && <ChecklistSection taskId={task.id} items={checklist} />}
@@ -380,10 +482,10 @@ function TaskDetailView({ task, tagNames, onEdit }: { task: Task; tagNames: stri
             <dd className="text-muted-foreground">{task.value} gold</dd>
           </div>
         )}
-        {task.type === 'todo' && task.date && (
+        {dueDate && (
           <div className="flex items-center gap-1">
-            <dt className="font-medium text-foreground">Due</dt>
-            <dd className="text-muted-foreground">{new Date(task.date).toLocaleDateString()}</dd>
+            <dt className="font-medium text-foreground">{task.type === 'daily' ? 'Next due' : 'Due'}</dt>
+            <dd className="text-muted-foreground">{formatDueDate(dueDate)}</dd>
           </div>
         )}
         {task.type === 'habit' && (

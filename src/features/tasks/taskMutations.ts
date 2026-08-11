@@ -69,12 +69,24 @@ export function useScoreTask() {
   })
 }
 
+/**
+ * New tasks land at the top of their list, not the bottom Habitica's API
+ * defaults to. That's not just a local display trick — `move/to/0` (see
+ * docs/vendor/tasks.controller.js, `0 = top of the list`) persists the
+ * order server-side too, so it survives the next refetch/invalidation
+ * instead of the task reverting to wherever the server would otherwise have
+ * appended it.
+ */
 export function useCreateTask() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: CreateTaskInput) => habiticaClient.post<Task>('/tasks/user', input),
+    mutationFn: async (input: CreateTaskInput) => {
+      const created = await habiticaClient.post<Task>('/tasks/user', input)
+      await habiticaClient.post(`/tasks/${created.id}/move/to/0`)
+      return created
+    },
     onSuccess: (created) => {
-      queryClient.setQueryData<Task[]>(['tasks'], (old) => (old ? [...old, created] : [created]))
+      queryClient.setQueryData<Task[]>(['tasks'], (old) => (old ? [created, ...old] : [created]))
     },
   })
 }

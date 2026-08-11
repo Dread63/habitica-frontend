@@ -11,8 +11,12 @@ Not affiliated with or endorsed by Habitica.
 Phases 0–4 are done: auth, full task/tag CRUD and scoring, the tag filter engine (include-any /
 require-all / exclude), and a redesign/polish pass (quick-add bar, reward/XP feedback, expandable
 detail view, compact density, task search, per-type visual accents, animation polish, responsive
-layout fixes). That's the "fully usable daily-driver" milestone — see `CLAUDE.md` for the detailed
-build log and `docs/implementation-plan.md` for the full roadmap.
+layout fixes) — plus a further round of fixes from real day-to-day use (task ordering, due dates,
+completed-task visibility, a violet "Proton Carbon" theme, Habits/Dailies/Rewards moved into a
+collapsible rail so To-Dos gets the wide main area, hotkeys, in-app confirm/prompt dialogs) and a
+full-width layout pass (To-Dos spreads across multiple columns, optionally grouped into
+Today & overdue / This week / Later / Someday). That's the "fully usable daily-driver" milestone —
+see `CLAUDE.md` for the detailed build log and `docs/implementation-plan.md` for the full roadmap.
 
 **Not yet done, and the most concrete next step:** the Docker build has never actually been run
 against a real Docker daemon — this repo was built in a sandbox without Docker available, so the

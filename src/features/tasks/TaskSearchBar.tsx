@@ -1,9 +1,11 @@
+import type { RefObject } from 'react'
 import { Search, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 
 interface TaskSearchBarProps {
   value: string
   onChange: (value: string) => void
+  inputRef?: RefObject<HTMLInputElement | null>
 }
 
 /**
@@ -14,12 +16,13 @@ interface TaskSearchBarProps {
  * confusing. See taskSearch.ts for the title > checklist > notes ranking
  * this drives.
  */
-export function TaskSearchBar({ value, onChange }: TaskSearchBarProps) {
+export function TaskSearchBar({ value, onChange, inputRef }: TaskSearchBarProps) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex flex-1 items-center gap-2">
       <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <div className="relative flex-1">
         <Input
+          ref={inputRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Search titles, subtasks, and descriptions…"

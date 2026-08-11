@@ -2,8 +2,9 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import {
   EMPTY_TAG_FILTER,
-  cycleTagInFilter,
   removeTagFromFilter,
+  toggleExcluded,
+  toggleIncluded,
   type TagFilterMode,
   type TagFilterState,
 } from './tagFilter'
@@ -20,8 +21,10 @@ interface TagFilterStoreState {
 }
 
 interface TagFilterStore extends TagFilterStoreState {
-  /** neutral -> included -> excluded -> neutral, see tagFilter.ts */
-  cycleTag: (tagId: string) => void
+  /** The chip's own click — plain include on/off. See tagFilter.ts. */
+  toggleTagIncluded: (tagId: string) => void
+  /** The chip's secondary exclude control. See tagFilter.ts. */
+  toggleTagExcluded: (tagId: string) => void
   setMode: (mode: TagFilterMode) => void
   clearFilter: () => void
   /** Called when a tag is deleted — drops it from the active filter and every saved preset. */
@@ -46,7 +49,8 @@ export const useTagFilterStore = create<TagFilterStore>()(
       filter: EMPTY_TAG_FILTER,
       presets: [],
 
-      cycleTag: (tagId) => set((state) => ({ filter: cycleTagInFilter(state.filter, tagId) })),
+      toggleTagIncluded: (tagId) => set((state) => ({ filter: toggleIncluded(state.filter, tagId) })),
+      toggleTagExcluded: (tagId) => set((state) => ({ filter: toggleExcluded(state.filter, tagId) })),
 
       setMode: (mode) => set((state) => ({ filter: { ...state.filter, mode } })),
 

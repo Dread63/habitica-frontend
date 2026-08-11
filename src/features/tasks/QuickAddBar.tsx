@@ -36,7 +36,7 @@ async function resolveTagIds(
   return ids
 }
 
-export function QuickAddBar() {
+export function QuickAddBar({ inputRef }: { inputRef?: React.RefObject<HTMLInputElement | null> }) {
   const [value, setValue] = React.useState('')
   const [error, setError] = React.useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
@@ -78,6 +78,7 @@ export function QuickAddBar() {
       <div className="flex items-center gap-2">
         <Plus className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <Input
+          ref={inputRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={'Add a task… #tag or #"multi word tag"  /habit /daily /reward  ! medium  !! hard  ~ trivial'}

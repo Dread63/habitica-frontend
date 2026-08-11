@@ -18,17 +18,24 @@ export interface TaskTypeMeta {
 
 /**
  * Colors chosen deliberately, not arbitrarily:
- *  - todo reuses the app's own --primary teal, since quick-add already
- *    treats todo as the default type (quickAdd.ts) and it's the "default,
- *    central" list — reusing the app's one existing accent says that.
- *  - reward is purple, matching taskColor.ts's existing (Habitica-sourced)
- *    convention that reward cards are always purple regardless of value.
- *  - habit (indigo) and daily (sky) round out four hues that read as
- *    distinct from each other at a glance.
+ *  - todo reuses the app's own --primary (violet, since the Proton-style
+ *    reskin — see index.css), since quick-add already treats todo as the
+ *    default type (quickAdd.ts) and it's the "default, central" list —
+ *    reusing the app's one existing accent says that.
+ *  - reward is gold/amber — Habitica's own currency color, and it reads as
+ *    "treasure" independent of any other system here. This used to be
+ *    purple to match taskColor.ts's reward-is-always-purple convention
+ *    (still true there — that's Habitica-sourced data, untouched), but
+ *    once --primary itself became violet that would've put two "purple"
+ *    signals right next to each other in the rail header (Rewards sits
+ *    directly above/below To-Dos) with no way to tell them apart at a
+ *    glance — worse than the thing the two-system split was meant to avoid.
+ *  - habit (blue) and daily (rose) round out four hues that stay visually
+ *    distinct from each other and from primary at a glance.
  */
 export const TASK_TYPE_META: Record<TaskType, TaskTypeMeta> = {
-  habit: { icon: Repeat, accent: '#6C7BF0', label: 'Habit' },
-  daily: { icon: CalendarCheck, accent: '#3AA0E8', label: 'Daily' },
+  habit: { icon: Repeat, accent: '#4C8DFF', label: 'Habit' },
+  daily: { icon: CalendarCheck, accent: '#EC6B9E', label: 'Daily' },
   todo: { icon: ListChecks, accent: 'var(--primary)', label: 'To-Do' },
-  reward: { icon: Gift, accent: '#A768F2', label: 'Reward' },
+  reward: { icon: Gift, accent: '#F0A93A', label: 'Reward' },
 }
