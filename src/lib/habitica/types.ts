@@ -201,8 +201,10 @@ export interface CreateTaskInput {
   attribute?: TaskAttribute
   priority?: TaskPriority
   checklist?: { text: string; completed?: boolean }[]
-  /** todo only */
-  date?: string
+  /** todo only. `null` explicitly clears an existing due date on update — omitting the field
+   * entirely leaves whatever due date the task already has untouched (see PUT's partial-update
+   * semantics), so clearing requires actually sending `null`, not just leaving this out. */
+  date?: string | null
   /** habit only */
   up?: boolean
   /** habit only */

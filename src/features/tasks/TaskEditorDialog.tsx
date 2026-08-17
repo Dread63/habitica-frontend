@@ -5,12 +5,14 @@ import { Pencil } from 'lucide-react'
 import { Dialog, type DialogHandle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { DatePicker } from '@/components/ui/DatePicker'
 import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { emojify } from '@/lib/emoji'
 import { useTwemoji } from '@/lib/useTwemoji'
+import { parseDateOnlyString, toApiDateTime, toDateOnlyString } from '@/lib/dateOnly'
 import { useCreateTask, useUpdateTask } from './taskMutations'
 import { useTags } from './useTags'
 import { PRIORITY_LABELS } from './priority'
@@ -72,7 +74,12 @@ function formStateFromTask(task: Task): FormState {
     frequency: task.type === 'daily' ? task.frequency : 'daily',
     everyX: task.type === 'daily' ? task.everyX : 1,
     repeat: task.type === 'daily' ? task.repeat : DEFAULT_REPEAT,
-    date: task.type === 'todo' && task.date ? task.date.slice(0, 10) : '',
+    // `task.date` is a full ISO instant for local midnight of the intended
+    // day (see taskDueDate.ts's getDueDate) — read it via local Date
+    // methods (toDateOnlyString), not by slicing the ISO string's first 10
+    // characters. Slicing would recover the *UTC* calendar day, which only
+    // happens to match the local day west of UTC; it's a day off east of it.
+    date: task.type === 'todo' && task.date ? toDateOnlyString(new Date(task.date)) : '',
     value: task.type === 'reward' ? task.value : 10,
   }
 }
@@ -92,8 +99,22 @@ function toInput(type: TaskType, form: FormState): CreateTaskInput {
     input.frequency = form.frequency
     input.everyX = form.everyX
     if (form.frequency === 'weekly') input.repeat = form.repeat
-  } else if (type === 'todo' && form.date) {
-    input.date = form.date
+  } else if (type === 'todo') {
+    // Always sent, even when empty — `null` explicitly clears an existing
+    // due date on update. Omitting the field (the old `&& form.date`
+    // guard) meant PUT left a previous due date in place even after the
+    // user cleared it in the form, since PUT only touches fields it's
+    // actually given.
+    //
+    // `form.date` is a local "YYYY-MM-DD" (DatePicker's value format) —
+    // converted to a real UTC instant for local midnight via
+    // toApiDateTime, not sent as a bare date string. See dateOnly.ts's
+    // comment on `toApiDateTime` for why: a bare string is parsed by
+    // Habitica as UTC midnight, which habitica.com's own frontend then
+    // displays a day early for anyone west of UTC — confirmed as a real
+    // bug, not a theoretical one.
+    const parsedDate = form.date ? parseDateOnlyString(form.date) : null
+    input.date = parsedDate ? toApiDateTime(parsedDate) : null
   } else if (type === 'reward') {
     input.value = form.value
   }
@@ -262,11 +283,7 @@ export const TaskEditorDialog = React.forwardRef<TaskEditorHandle, TaskEditorDia
 
           {type === 'todo' && (
             <Field label="Due date (optional)">
-              <Input
-                type="date"
-                value={form.date}
-                onChange={(e) => setForm((f) => ({ ...f, date: e.target.value }))}
-              />
+              <DatePicker value={form.date} onChange={(date) => setForm((f) => ({ ...f, date }))} />
             </Field>
           )}
 

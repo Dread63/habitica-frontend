@@ -1,4 +1,5 @@
 import type { TodoTask } from '@/lib/habitica/types'
+import { addDays, startOfDay } from '@/lib/dateOnly'
 import { getDueDate } from './taskDueDate'
 
 /**
@@ -25,14 +26,6 @@ export const TODO_BUCKET_HINTS: Record<TodoBucket, string> = {
   someday: 'No due date set',
 }
 
-function startOfDay(date: Date): number {
-  const copy = new Date(date)
-  copy.setHours(0, 0, 0, 0)
-  return copy.getTime()
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000
-
 /**
  * `now` is injected rather than read from the clock inside so this stays a
  * pure function — the bucket boundaries are date math with real edge cases
@@ -48,10 +41,9 @@ export function bucketOf(task: TodoTask, now: Date = new Date()): TodoBucket {
   const due = getDueDate(task)
   if (!due) return 'someday'
 
-  const todayStart = startOfDay(now)
-  const tomorrowStart = todayStart + DAY_MS
+  const tomorrowStart = addDays(startOfDay(now), 1).getTime()
   // Through the end of the 7th day after today.
-  const weekEnd = todayStart + 8 * DAY_MS
+  const weekEnd = addDays(startOfDay(now), 8).getTime()
 
   const dueTime = due.getTime()
   if (dueTime < tomorrowStart) return 'today'

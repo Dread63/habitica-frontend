@@ -76,13 +76,29 @@ export function useScoreTask() {
  * order server-side too, so it survives the next refetch/invalidation
  * instead of the task reverting to wherever the server would otherwise have
  * appended it.
+ *
+ * The move call is best-effort, deliberately swallowed on failure — this is
+ * the fix for a real, confirmed bug: with an unguarded `await`, any failure
+ * here (a 429 that outlasts the rate limiter's retries, a transient network
+ * blip, anything) rejected the whole mutation, so `onSuccess` never ran and
+ * a task that *was* genuinely created server-side (visible on habitica.com)
+ * never made it into the local cache — reported as "creates it but doesn't
+ * show it in our app." Reordering is a nice-to-have on top of a successful
+ * create, not a condition of it actually showing up.
  */
 export function useCreateTask() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: async (input: CreateTaskInput) => {
       const created = await habiticaClient.post<Task>('/tasks/user', input)
-      await habiticaClient.post(`/tasks/${created.id}/move/to/0`)
+      try {
+        await habiticaClient.post(`/tasks/${created.id}/move/to/0`)
+      } catch {
+        // Non-fatal — see comment above. The task still shows, just
+        // wherever the server would otherwise have placed it (still
+        // corrected on the next full refetch, since ['tasks'] isn't the
+        // only thing that keeps the UI in sync over a session).
+      }
       return created
     },
     onSuccess: (created) => {

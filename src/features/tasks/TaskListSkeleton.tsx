@@ -24,12 +24,18 @@ export function TaskListSkeleton() {
         </div>
       </div>
 
-      {/* To-Dos board: one header, then cards flowed across columns. */}
+      {/* To-Dos board: one header, then the four due-date buckets (grouping
+          defaults on) — each its own mini header + a couple of cards. */}
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <div className="h-6 w-28 animate-pulse rounded bg-muted" />
-        <div className="grid grid-cols-1 gap-x-5 gap-y-3 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-lg border border-border bg-muted/50" />
+        <div className="grid grid-cols-1 gap-x-5 gap-y-6 md:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, col) => (
+            <div key={col} className="flex flex-col gap-3">
+              <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+              {Array.from({ length: col === 3 ? 1 : 2 }).map((_, row) => (
+                <div key={row} className="h-24 animate-pulse rounded-lg border border-border bg-muted/50" />
+              ))}
+            </div>
           ))}
         </div>
       </div>

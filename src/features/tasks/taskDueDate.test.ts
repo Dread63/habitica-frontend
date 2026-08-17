@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { getDueDate, isOverdue, sortTasksByDueDate } from './taskDueDate'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { formatDueDate, getDueDate, isOverdue, sortTasksByDueDate } from './taskDueDate'
+import { parseDateOnlyString, toApiDateTime, today } from '@/lib/dateOnly'
 import type { DailyTask, HabitTask, RewardTask, TodoTask } from '@/lib/habitica/types'
 
 function todo(overrides: Partial<TodoTask> = {}): TodoTask {
@@ -104,12 +105,13 @@ function reward(overrides: Partial<RewardTask> = {}): RewardTask {
 }
 
 describe('getDueDate', () => {
-  it('reads a todo due date from `date`', () => {
-    expect(getDueDate(todo({ date: '2026-08-15' }))?.toISOString().slice(0, 10)).toBe('2026-08-15')
+  it("is null for a todo with no due date", () => {
+    expect(getDueDate(todo())).toBeNull()
   })
 
-  it('is null for a todo with no due date', () => {
-    expect(getDueDate(todo())).toBeNull()
+  it("reads a todo's due date from `date`", () => {
+    const due = getDueDate(todo({ date: '2026-08-18T00:00:00.000Z' }))
+    expect(due?.toISOString()).toBe('2026-08-18T00:00:00.000Z')
   })
 
   it("reads a daily's next occurrence from nextDue[0]", () => {
@@ -127,19 +129,76 @@ describe('getDueDate', () => {
     expect(getDueDate(habit())).toBeNull()
     expect(getDueDate(reward())).toBeNull()
   })
+
+  describe('write/read round-trip — the fix for a real, confirmed bug', () => {
+    // The bug wasn't in reading a todo's `date` back — it was in what got
+    // sent in the first place. A bare "YYYY-MM-DD" string (what this app
+    // used to send) is parsed by Habitica as literal UTC midnight, which
+    // habitica.com's own frontend then displays a day early for anyone
+    // west of UTC — confirmed by a user cross-checking a task created via
+    // this app's quick-add against habitica.com itself. The fix
+    // (`toApiDateTime` in lib/dateOnly.ts) sends a real UTC instant for
+    // *local* midnight instead, matching what an ordinary date picker (and
+    // habitica.com's own) sends. This round-trips `toApiDateTime` into
+    // `getDueDate` across several real timezones and confirms the
+    // calendar day picked is the calendar day recovered — the thing that
+    // actually matters, more than any single function's internals.
+    afterEach(() => {
+      vi.unstubAllEnvs()
+    })
+
+    it.each(['America/Denver', 'America/New_York', 'Pacific/Kiritimati', 'Asia/Tokyo', 'UTC'])(
+      'round-trips the picked calendar day correctly (%s)',
+      (tz) => {
+        vi.stubEnv('TZ', tz)
+        const picked = parseDateOnlyString('2026-08-18')
+        expect(picked).not.toBeNull()
+        const apiValue = toApiDateTime(picked as Date)
+
+        const due = getDueDate(todo({ date: apiValue }))
+        expect(due).not.toBeNull()
+        expect(due?.getFullYear()).toBe(2026)
+        expect(due?.getMonth()).toBe(7) // August, 0-indexed
+        expect(due?.getDate()).toBe(18)
+      },
+    )
+
+    it('formats as the correct day for a viewer behind UTC — the exact scenario reported', () => {
+      vi.stubEnv('TZ', 'America/Denver')
+      const apiValue = toApiDateTime(parseDateOnlyString('2026-08-18') as Date)
+      const due = getDueDate(todo({ date: apiValue }))
+      expect(formatDueDate(due as Date)).toBe('Aug 18')
+    })
+  })
 })
 
 describe('isOverdue', () => {
-  it('is true for a past-due, incomplete todo', () => {
-    expect(isOverdue(todo({ date: '2000-01-01' }))).toBe(true)
+  beforeEach(() => {
+    vi.stubEnv('TZ', 'America/Denver')
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('is true for a clearly past-due, incomplete todo', () => {
+    expect(isOverdue(todo({ date: '2000-01-01T00:00:00.000Z' }))).toBe(true)
   })
 
   it('is false once the todo is completed, even if past-due', () => {
-    expect(isOverdue(todo({ date: '2000-01-01', completed: true }))).toBe(false)
+    expect(isOverdue(todo({ date: '2000-01-01T00:00:00.000Z', completed: true }))).toBe(false)
   })
 
   it('is false for a todo with no due date', () => {
     expect(isOverdue(todo())).toBe(false)
+  })
+
+  it('is false for a todo due today — not overdue until the day has fully passed', () => {
+    // Whatever hour it actually is when this test runs, "due today" must
+    // never read as overdue — this is the compounding half of the bug:
+    // the old raw-timestamp comparison flagged a same-day task as overdue
+    // the moment the clock passed midnight. toApiDateTime(today()), not a
+    // hand-built UTC-midnight string — that's what this app actually sends.
+    expect(isOverdue(todo({ date: toApiDateTime(today()) }))).toBe(false)
   })
 
   it('is never true for dailies — a due-but-not-done daily is expected, not overdue', () => {
@@ -149,13 +208,13 @@ describe('isOverdue', () => {
 
 describe('sortTasksByDueDate', () => {
   it('sorts ascending by due date', () => {
-    const later = todo({ id: 'a', date: '2026-09-01' })
-    const sooner = todo({ id: 'b', date: '2026-08-01' })
+    const later = todo({ id: 'a', date: '2026-09-01T00:00:00.000Z' })
+    const sooner = todo({ id: 'b', date: '2026-08-01T00:00:00.000Z' })
     expect(sortTasksByDueDate([later, sooner]).map((t) => t.id)).toEqual(['b', 'a'])
   })
 
   it('pushes due-less tasks to the end, not the start', () => {
-    const dated = todo({ id: 'dated', date: '2026-08-01' })
+    const dated = todo({ id: 'dated', date: '2026-08-01T00:00:00.000Z' })
     const undated = todo({ id: 'undated' })
     expect(sortTasksByDueDate([undated, dated]).map((t) => t.id)).toEqual(['dated', 'undated'])
   })
@@ -167,7 +226,7 @@ describe('sortTasksByDueDate', () => {
   })
 
   it('does not mutate the input array', () => {
-    const input = [todo({ id: 'a', date: '2026-09-01' }), todo({ id: 'b', date: '2026-08-01' })]
+    const input = [todo({ id: 'a', date: '2026-09-01T00:00:00.000Z' }), todo({ id: 'b', date: '2026-08-01T00:00:00.000Z' })]
     const original = [...input]
     sortTasksByDueDate(input)
     expect(input).toEqual(original)

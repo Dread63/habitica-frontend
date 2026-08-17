@@ -7,27 +7,31 @@ frontend only supports AND-only include). Full design rationale: `docs/implement
 ## Status
 
 **Phase 0 through 4 are done** — the full §6a backlog (quick-add bar, reward/XP feedback,
-detail view, compact density) plus loading/empty-state polish — **and so is a round of
-post-Phase-4 fixes, a visual/responsive design pass, and a real-usage feedback round** (13 notes
-from actually using the app day-to-day: task ordering, completed-task visibility, due dates, a
-layout reorg moving Habits/Dailies/Rewards into a collapsible rail, a "Proton Carbon" theme
-reskin, in-place title/notes editing, a tag-filter interaction rework, emoji shortcode rendering,
-hotkeys, and replacing every `window.confirm`/`window.prompt` with themed in-app dialogs). Search
-"Post-Phase-4 fixes", "Visual/responsive design pass", and "Real-usage feedback round" below for
-the details. Phase 5 (party/guilds/chat/market — optional, separately scoped) and Phase 6 (Docker
-hardening) remain. See `docs/implementation-plan.md` §6 for the full phase breakdown.
+detail view, compact density) plus loading/empty-state polish — **and so are a post-Phase-4
+fixes round, a visual/responsive design pass, a real-usage feedback round, a wide-layout pass,
+a due-date round, and Phase 6 (Docker), now actually verified against a real daemon** (13 notes
+from actually using the app day-to-day, then a further list specifically about dates: a real
+timezone bug fix, drag-and-drop between due-date buckets, quick-add `@date` shorthand, a themed
+`DatePicker` replacing the native browser one, due-date grouping as the default view, then a real
+`docker compose up --build` run that found and fixed a genuine `HEALTHCHECK` bug). Search
+"Post-Phase-4 fixes", "Visual/responsive design pass", "Real-usage feedback round",
+"Wide-layout round", "Due-date round", and "Phase 6 — Docker, actually verified" below for the
+details. Phase 5 (party/guilds/chat/market — optional, separately scoped) is the only phase-sized
+work left; Phase 6's remaining scope is a packaging decision (multi-arch build, versioned tags, a
+registry to publish to), not a correctness gap. See `docs/implementation-plan.md` §6 for the full
+phase breakdown.
 
-**Picking this up on a machine that actually has Docker (the concrete next step, per the notes
-below):**
-1. `cp .env.example .env`, set `VITE_HABITICA_CLIENT_ID` to `<your-habitica-user-id>-habitica-modern-frontend`
-2. `docker compose up --build` — this exact command has never been run against a real Docker
-   daemon before now; the Dockerfile/compose/nginx.conf are correct by inspection only (see "What
-   Phase 1 built" below and README.md's Docker section for the specific things to check: the
-   multi-stage build completes, `/healthz` responds, login works end-to-end against a real
-   Habitica account, and a hard refresh on a client-routed path doesn't 404)
-3. If that all works, Phase 6 (healthcheck is already there; multi-arch build, versioned tags,
-   TLS-behind-reverse-proxy notes remain) is the natural next unit of work — or just start using
-   the app daily and let real usage surface what's actually missing before committing to Phase 5.
+**Docker is now verified** (see "Phase 6 — Docker, actually verified" below for the full
+checklist and the `HEALTHCHECK` bug it found and fixed). What's left to do on a machine with a
+real Habitica account:
+1. `cp .env.example .env` (if you don't already have one), set `VITE_HABITICA_CLIENT_ID` to
+   `<your-habitica-user-id>-habitica-modern-frontend`
+2. `docker compose up --build`, then actually log in — the one thing that still hasn't been
+   checked end-to-end is auth against the real Habitica API from inside the container (everything
+   else — build, healthcheck, SPA fallback, asset caching — has been)
+3. From there: multi-arch build / versioned tags / a registry to publish to is the remaining
+   Phase 6 scope (a packaging decision, not a correctness fix) — or just start using the app daily
+   and let real usage surface what's actually missing before committing to Phase 5.
 
 What Phase 0 established:
 - **CORS is open** on the Habitica API (`access-control-allow-origin: *`, verified via a live
@@ -384,6 +388,136 @@ and left most of a wide monitor empty; four sub-decisions settled via `AskUserQu
   against the old 4-equal-column design and would have caused exactly the layout jump it exists
   to prevent.
 
+Due-date round (immediately after the above, same day — a real timezone bug plus a due-date
+feature request list: proper drag-and-drop, quick-add date shorthand, a themed date picker, and
+due-date sorting as the default):
+
+- **Fixed a real, confirmed timezone bug** — "set a task due tomorrow the 18th, it shows due
+  today the 17th" — **and then fixed it again, correctly, after the first fix turned out to
+  address the wrong half of it.** Worth recording both attempts, not just the final state:
+  - *First pass (wrong half):* traced through Habitica's own source (`docs/vendor/task.model.js`)
+    that a todo's `date` is a plain Mongoose `Date`, and that this app was sending a bare
+    `"YYYY-MM-DD"` string, which per the ECMAScript spec is parsed as **UTC midnight** — so a todo
+    "due 2026-08-18" was stored as exactly `2026-08-18T00:00:00.000Z`. Reading that back with
+    *local* `Date` methods rolls it back a day for anyone west of UTC (reproduced against this
+    app's own code in `America/Denver`). The fix applied at the time changed `getDueDate` to read
+    a todo's `date` via its **UTC** components instead — which made this app's *own* display
+    self-consistent, but didn't touch what got *sent*.
+  - *What that missed:* a user then created a task via quick-add and checked the result on
+    **habitica.com itself** — still wrong there too. That's the tell: the bug was in what this app
+    sent, not how it read the result back. habitica.com's own frontend, like any ordinary JS date
+    picker, sends a real timestamp for *local* midnight and reads it back with plain local `Date`
+    methods — this app's bare-date-string write was internally self-consistent but incompatible
+    with Habitica's own convention.
+  - *Actual fix:* moved to the write side. `lib/dateOnly.ts`'s `toApiDateTime(date)` (just
+    `date.toISOString()`, but named and centralized specifically so this rule has one obvious home)
+    is now used everywhere this app sets a due date — `TaskEditorDialog`'s `toInput`, `QuickAddBar`,
+    `TodoBoard`'s drag-and-drop. `getDueDate` in `taskDueDate.ts` went back to a plain `new
+    Date(task.date)` — the UTC-component read was reverted, not layered on top, since it's wrong
+    once the write side is correct (right by coincidence only for timezones behind UTC, wrong east
+    of it). Footgun #9 in `docs/habitica-api.md` was rewritten to match, not left describing the
+    superseded diagnosis.
+  - Compounding half of the same bug, still fixed and still correct: `isOverdue` used to compare a
+    raw due-midnight timestamp against `Date.now()`, flagging anything due *today* as overdue the
+    instant the clock passed midnight — it compares calendar days now (due day strictly before
+    today).
+  - **Lesson applied going forward, not just noted**: a self-consistent fix within this app's own
+    round-trip isn't the same as a *correct* one — this app is a frontend for a real external
+    system, and "does it look right in this app" isn't sufficient verification for anything that
+    round-trips through Habitica's own storage and (critically) its own frontend. The tests in
+    `taskDueDate.test.ts` now assert the write→read round-trip via `toApiDateTime`/`getDueDate`
+    together across five real timezones, not `getDueDate`'s internals in isolation — the round-trip
+    is the thing that actually matters.
+- **`src/lib/dateOnly.ts`** — general-purpose "calendar date" utilities (`today`, `startOfDay`,
+  `addDays`, `addMonths`, `toDateOnlyString`, `parseDateOnlyString`, `isSameDate`), all operating
+  in the *local* calendar, plus the one deliberate exception: `toApiDateTime`, for the one place
+  this app is supposed to produce a real UTC instant (talking to Habitica's `date` field) rather
+  than staying in local-calendar-string land. Every other date-handling piece in this round
+  (`DatePicker`, quick-add `@date` tokens, drag-and-drop) is built on these. 22 tests.
+- **`components/ui/DatePicker.tsx`** — a themed calendar dropdown replacing the native
+  `<input type="date">` in `TaskEditorDialog` (a direct complaint: the native picker can't be
+  restyled to match the rest of the app). Exports `CalendarGrid` (month nav + day grid, no
+  trigger/input chrome) separately from `DatePicker` (trigger button + popover wrapping it) so the
+  bare grid can be reused standalone — see drag-and-drop below. `TaskEditorDialog`'s `toInput` was
+  also fixed alongside this: it used to only set `date` in the request body when truthy, so
+  clearing a todo's due date in the form silently did nothing (PUT only touches fields it's
+  actually given) — `CreateTaskInput`/`UpdateTaskInput.date` is now typed `string | null` and
+  `null` is sent explicitly to clear.
+- **Quick-add `@date` shorthand** (`quickAdd.ts`) — `@today`, `@tomorrow`, a weekday name/
+  abbreviation (`@friday`/`@fri` — resolves to the *next* occurrence, inclusive of today: naming
+  today's own weekday means today, matching Todoist's convention for the same ambiguity), or an
+  explicit `@8/11`, `@8/11/26`, `@8/11/2026`. A bare `@M/D` with no year assumes the current year
+  unless that date has already passed, in which case it rolls to next year (typing "@1/5" in
+  December almost certainly means next January). `parseQuickAdd` now takes an optional `now`
+  parameter (defaulting to the real clock) purely for this — same pattern as `todoBuckets.ts`'s
+  `bucketOf`. An unrecognized `@word` (including an `@`-glued email address, which never even
+  matches the token boundary) is left as literal text, same treatment as an unrecognized `/word`.
+  20 new tests. `QuickAddBar`'s live preview line gained a date chip; the created task always
+  includes `date` when parsed (Habitica ignores it for non-todo types per the existing footgun
+  list, so no type-gating needed).
+- **Drag-and-drop between due-date buckets** (`TodoBoard.tsx`) — grouped view only (buckets only
+  exist there). Native HTML5 drag-and-drop, no dependency: drop on Today & overdue → due today;
+  drop on This week → due in exactly 7 days from today (not "sometime this rolling week" — a card
+  dropped in on a Saturday would get almost no runway under that reading); drop on Someday →
+  clears the due date; drop on Later → opens a small floating popover (the bare `CalendarGrid`
+  from `DatePicker.tsx`, pinned near the drop point) to pick a specific date, since no fixed
+  offset makes sense for "later". A card already in the bucket it's dropped on (except Later,
+  which always reopens the picker) is a no-op — no pointless PUT. **Disclosed limitation, not
+  silently accepted**: native HTML5 DnD is mouse/trackpad-only — no touch-screen support without a
+  polyfill (not built), and no keyboard equivalent. Not a dead end either way: every card's pencil
+  icon still opens the full editor with the same `DatePicker`, so drag-and-drop is a shortcut on
+  an already-fully-accessible path, not the only way to set a due date.
+- **Due-date grouping is now the default** (`Dashboard.tsx`'s `groupByDueDate` starts `true`,
+  was `false`) — per explicit request that due-date sorting be the default view. `TaskListSkeleton`
+  updated to mirror the four-bucket grouped layout instead of the flowed-list ungrouped one, since
+  that's what most loads will actually show now.
+- **Found and fixed a second real bug while chasing the date report above**: a user also reported
+  that a newly-created task "shows on habitica.com but not in our app." Root cause:
+  `useCreateTask`'s `mutationFn` (`taskMutations.ts`) awaited *two* sequential API calls — create,
+  then the `move/to/0` reordering call from the earlier "new tasks go to the top" round — with no
+  error handling around the second one. Any failure there (a 429 outlasting the rate limiter's
+  retries, a transient network blip, anything) rejected the *whole* mutation, so `onSuccess` never
+  ran and a task that genuinely existed server-side never made it into the local cache. Fixed by
+  wrapping the `move/to/0` call in its own `try/catch` — reordering is a nice-to-have on top of a
+  successful create, not a condition of the task showing up at all.
+
+Phase 6 — Docker, actually verified (immediately after the due-date round, same session — a real
+Docker daemon (OrbStack, macOS host) became available, so the "never actually run" gap flagged
+since Phase 1 finally got closed instead of staying a permanent caveat):
+
+- **`docker compose up --build` was run for real** and the multi-stage build completes cleanly
+  (`node:22-alpine` → `nginx:1.27-alpine`, ~78MB final image). `/healthz` responds `ok`, `/` and a
+  client-routed path both return `200` with `index.html` (confirming `nginx.conf`'s SPA fallback
+  actually works, not just reads correctly), and hashed assets serve with the intended
+  `Cache-Control: immutable` while `index.html` stays `no-cache`.
+- **Found and fixed a real bug in the process**: the container's own `HEALTHCHECK` (`wget -qO-
+  http://localhost/healthz`) failed on *every single probe* with "connection refused" —
+  permanently reporting the container `unhealthy` in `docker ps`/`docker inspect`, despite the app
+  working completely fine from outside on the mapped host port. Root cause, confirmed by
+  `docker exec`-ing in: busybox `wget` resolves `localhost` to `::1` (IPv6) first (`getent hosts
+  localhost` confirms it), but nginx's plain `listen 80;` in `nginx.conf` only binds the IPv4
+  wildcard on this image/kernel — so the probe connects to a port nothing is listening on.
+  `curl`ing `127.0.0.1` (bypassing the IPv6 resolution) worked immediately. Fixed by pointing the
+  `HEALTHCHECK` at `127.0.0.1` explicitly (`Dockerfile`) rather than depending on `localhost`'s
+  resolution order — the standard fix for this well-known class of container healthcheck bug.
+  Rebuilt and re-verified: `docker ps` now reports `(healthy)` on the very first probe. This is
+  exactly the kind of bug that can only be found by actually running the container, not by
+  inspection — it had been sitting in the Dockerfile since Phase 1.
+- **Not verified**: logging in against a real Habitica account end-to-end. Everything above was
+  checked without live credentials in the loop (this session never had a real Habitica user ID/API
+  token) — it exercises `src/lib/habitica/client.ts` against the real API, not anything
+  Docker-specific, so it's a meaningfully separate check from what's covered here.
+- **Still open, and deliberately not decided here**: multi-arch build, versioned tags, and a
+  registry to actually publish images to. That's a packaging/release decision (Docker Hub? GHCR?
+  self-hosted registry? a version scheme?) that wasn't asked for and shouldn't be assumed — flagged
+  as the remaining Phase 6 scope rather than silently built.
+- The verification container ran on `HOST_PORT=8081` (an env-var override on the `docker compose
+  up` invocation, not a change to the repo's `.env` — port 8080 was already in use by an unrelated
+  container on this machine) and was torn down (`docker compose down`) after confirming healthy,
+  rather than left running. `.env` itself was left untouched — it already existed with the
+  placeholder `VITE_HABITICA_CLIENT_ID` from `.env.example`, still needs the real value set before
+  this is used for anything but a build/serve smoke test.
+
 ## Architecture (decided, don't re-litigate without reason)
 
 - **No custom backend.** Static SPA, built and served by `nginx:alpine` in a single
@@ -470,22 +604,26 @@ exclusion wins). Full spec incl. the revision history: `docs/implementation-plan
    effort — see the note below.
 5. *(separately-scoped, optional)* Party/guilds/chat/challenges/market/equipment — full RPG/social
    parity. Don't start this without an explicit decision to — see the plan for why.
-6. Docker hardening — healthcheck, multi-arch build, versioned tags, TLS-behind-reverse-proxy notes
+6. ✅⚠️ Docker hardening — healthcheck (verified working, and a real bug in it fixed — see "Phase
+   6 — Docker, actually verified" above); multi-arch build, versioned tags,
+   TLS-behind-reverse-proxy notes remain (a packaging/publishing decision, not a correctness gap)
 
-**Nothing is queued next.** Phases 1–4, the post-Phase-4 fixes (multi-word quick-add tags, task
-search), the visual/responsive design pass, and the real-usage feedback round (see above, all
-three) cover the "fully usable, modern-feeling daily-driver" milestone the original plan
-recommended stopping at (`docs/implementation-plan.md` §6). Remaining scope is Phase 5 (a second
-application's worth of work — RPG/social features — needs an explicit decision to start, not a
-default) and Phase 6 (Docker hardening: the Dockerfile/compose have never been build-tested
-against a real Docker daemon in the sandbox this was built in — see the note in "What Phase 1
-built" above — that's the one concrete gap worth closing even if Phase 5 stays out of scope). The
-responsive breakpoint fixes from the design pass, and the new rail/sticky-sidebar layout from the
+**Only Phase 5 remains as phase-sized work, and it needs an explicit decision to start — it isn't
+queued by default.** Phases 1–4, the post-Phase-4 fixes (multi-word quick-add tags, task search),
+the visual/responsive design pass, the real-usage feedback round, the wide-layout pass, the
+due-date round, and Phase 6's build/serve verification (see above, all of them) cover the "fully
+usable, modern-feeling daily-driver" milestone the original plan recommended stopping at
+(`docs/implementation-plan.md` §6) — and now Docker itself is confirmed to actually work, not just
+inspected. What's left, concretely: logging in against a real Habitica account end-to-end inside
+the container (the one Docker checklist item still unverified), and Phase 6's packaging decisions
+(multi-arch build / versioned tags / where images get published) whenever that's wanted. The
+responsive breakpoint fixes from the design pass, and the rail/sticky-sidebar layout from the
 feedback round, were both reasoned through, not verified on a real narrow-viewport device/browser
 (no browser-automation tool was available in either sandbox) — worth a real on-device check if
-anything still looks off. Two items from the feedback round were flagged rather than fixed — see
-"Not done, worth knowing about" at the end of that section (a true multi-column To-Dos layout, and
-the `node-emoji` bundle-size cost).
+anything still looks off. A few items were flagged rather than fixed along the way rather than
+silently skipped — see "Not done, worth knowing about" in the real-usage feedback round section
+(a true multi-column To-Dos layout, the `node-emoji` bundle-size cost) and the Phase 6 section
+above (login end-to-end, multi-arch/versioned-tags/registry).
 
 **Phase 4 has a real backlog now, captured during Phase 2 testing — see
 `docs/implementation-plan.md` §6a before assuming Phase 4 is just "polish":** a universal

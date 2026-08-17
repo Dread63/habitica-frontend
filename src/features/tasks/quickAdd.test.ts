@@ -172,4 +172,115 @@ describe('parseQuickAdd', () => {
     expect(parseQuickAdd('').text).toBe('')
     expect(parseQuickAdd('   ').text).toBe('')
   })
+
+  describe('date tokens (@)', () => {
+    // Wednesday, 2026-08-12 — a fixed reference point so every relative
+    // form below (@tomorrow, @friday, a bare @M/D) is deterministic.
+    const NOW = new Date(2026, 7, 12)
+
+    it('@today resolves to the reference date', () => {
+      expect(parseQuickAdd('Pay rent @today', NOW).date).toBe('2026-08-12')
+    })
+
+    it('@tomorrow resolves to one day ahead', () => {
+      expect(parseQuickAdd('Pay rent @tomorrow', NOW).date).toBe('2026-08-13')
+    })
+
+    it('strips the token from the text', () => {
+      expect(parseQuickAdd('Pay rent @tomorrow', NOW).text).toBe('Pay rent')
+    })
+
+    it('is case-insensitive', () => {
+      expect(parseQuickAdd('Pay rent @TOMORROW', NOW).date).toBe('2026-08-13')
+      expect(parseQuickAdd('Pay rent @Friday', NOW).date).toBe('2026-08-14')
+    })
+
+    describe('weekday names', () => {
+      it('resolves to the next occurrence, inclusive of today', () => {
+        // NOW is a Wednesday — naming Wednesday itself means today, not a
+        // week from now (matches Todoist's convention for the same ambiguity).
+        expect(parseQuickAdd('Task @wednesday', NOW).date).toBe('2026-08-12')
+        expect(parseQuickAdd('Task @wed', NOW).date).toBe('2026-08-12')
+      })
+
+      it('resolves to the upcoming occurrence for a day later in the week', () => {
+        expect(parseQuickAdd('Task @friday', NOW).date).toBe('2026-08-14')
+        expect(parseQuickAdd('Task @fri', NOW).date).toBe('2026-08-14')
+      })
+
+      it('wraps to next week for a day earlier in the week', () => {
+        // Monday has already passed this week as of Wednesday — next
+        // Monday is 5 days out, not -2.
+        expect(parseQuickAdd('Task @monday', NOW).date).toBe('2026-08-17')
+      })
+
+      it('accepts full names and common abbreviations', () => {
+        expect(parseQuickAdd('Task @sat', NOW).date).toBe('2026-08-15')
+        expect(parseQuickAdd('Task @saturday', NOW).date).toBe('2026-08-15')
+      })
+    })
+
+    describe('explicit M/D dates', () => {
+      it('assumes the current year when omitted, if the date is still upcoming', () => {
+        expect(parseQuickAdd('Task @12/25', NOW).date).toBe('2026-12-25')
+      })
+
+      it('rolls to next year when the bare date has already passed this year', () => {
+        expect(parseQuickAdd('Task @1/5', NOW).date).toBe('2027-01-05')
+      })
+
+      it('does not roll forward a bare date that is exactly today', () => {
+        expect(parseQuickAdd('Task @8/12', NOW).date).toBe('2026-08-12')
+      })
+
+      it('accepts a 2-digit year', () => {
+        expect(parseQuickAdd('Task @8/11/26', NOW).date).toBe('2026-08-11')
+        expect(parseQuickAdd('Task @8/11/99', NOW).date).toBe('2099-08-11')
+      })
+
+      it('accepts a 4-digit year', () => {
+        expect(parseQuickAdd('Task @8/11/2026', NOW).date).toBe('2026-08-11')
+      })
+
+      it('an explicit year is never rolled forward, even if already past', () => {
+        expect(parseQuickAdd('Task @1/1/2020', NOW).date).toBe('2020-01-01')
+      })
+    })
+
+    it('an unrecognized @word is left in the text, not silently dropped', () => {
+      const result = parseQuickAdd('Task @someone about this', NOW)
+      expect(result.date).toBeUndefined()
+      expect(result.text).toBe('Task @someone about this')
+    })
+
+    it('an @ glued mid-word (e.g. an email address) is never mistaken for a token', () => {
+      const result = parseQuickAdd('Email me@example.com about this', NOW)
+      expect(result.date).toBeUndefined()
+      expect(result.text).toBe('Email me@example.com about this')
+    })
+
+    it('rejects a nonsensical calendar date rather than guessing', () => {
+      const result = parseQuickAdd('Task @2/30', NOW)
+      expect(result.date).toBeUndefined()
+      expect(result.text).toBe('Task @2/30')
+    })
+
+    it('last @date token wins if more than one is present', () => {
+      expect(parseQuickAdd('Task @monday @friday', NOW).date).toBe('2026-08-14')
+    })
+
+    it('is absent from the result entirely when no @token is present', () => {
+      expect(parseQuickAdd('Plain task', NOW)).not.toHaveProperty('date')
+    })
+
+    it('composes with tags, type, and difficulty', () => {
+      expect(parseQuickAdd('Renew registration @friday #errands /todo !', NOW)).toEqual({
+        text: 'Renew registration',
+        type: 'todo',
+        priority: 1.5,
+        tagNames: ['errands'],
+        date: '2026-08-14',
+      })
+    })
+  })
 })

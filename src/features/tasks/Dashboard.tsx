@@ -57,10 +57,12 @@ export function Dashboard() {
   const [scheduledOnly, setScheduledOnly] = React.useState(false)
   // One control, two effects: To-Dos split into the four due-date columns
   // (see TodoBoard/todoBuckets), and Dailies sort by their next occurrence.
-  // Deliberately off by default so the natural order — which "new tasks go
-  // to the top" (useCreateTask's move/to/0) depends on — is what you see
-  // until you ask for a date view.
-  const [groupByDueDate, setGroupByDueDate] = React.useState(false)
+  // Defaults on, per explicit request that due-date sorting be the default
+  // view — "new tasks go to the top" (useCreateTask's move/to/0) still
+  // applies within a bucket once due dates tie (compareTodos falls back to
+  // task color, not insertion order, so this is a soft trade-off, not a
+  // contradiction).
+  const [groupByDueDate, setGroupByDueDate] = React.useState(true)
   const completedTodosQuery = useCompletedTodos(showCompleted.todo)
 
   const searchInputRef = React.useRef<HTMLInputElement>(null)

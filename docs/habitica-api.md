@@ -276,6 +276,25 @@ participation — user-created tags are just `{id, name}`.
    expecting the response to contain a task object.
 8. **`tagId` on `POST /tasks/:taskId/tags/:tagId` must already exist in `user.tags`** — the server
    validates it's a UUID *and* that it's in the user's own tag list, not just any UUID.
+9. **Never send a bare `"YYYY-MM-DD"` string for a todo's `date` — Habitica parses it as literal
+   UTC midnight, not local midnight, and its own frontend then displays it a day early for anyone
+   west of UTC.** `date` is a plain Mongoose `Date` (`docs/vendor/task.model.js`); a bare date-only
+   string (what a native `<input type="date">` naturally produces) gets cast via `new
+   Date("YYYY-MM-DD")`, and per the ECMAScript spec that's parsed as **UTC midnight** — so a todo
+   "due 2026-08-18" would be stored as exactly `2026-08-18T00:00:00.000Z`, regardless of whose
+   timezone set it. habitica.com's own frontend reads a due date back with plain local `Date`
+   methods (like any ordinary date picker's round trip), so a UTC-midnight instant displays as the
+   *previous* local day for anyone west of UTC. **Confirmed as a real bug this app actually shipped
+   once**: a task created via this app's quick-add showed the wrong due date on habitica.com
+   itself, not just in this app — proof the bug was in what got sent, not how it was read back.
+   Fix: send a real UTC instant for *local* midnight of the intended day instead —
+   `date.toISOString()` on a local-midnight `Date`, exactly what a normal JS date picker produces.
+   See `src/lib/dateOnly.ts`'s `toApiDateTime` (used by `DatePicker.tsx`, `quickAdd.ts`'s `@date`
+   tokens, and `TodoBoard.tsx`'s drag-and-drop) and `src/features/tasks/taskDueDate.ts`'s
+   `getDueDate`, which reads the result back with a plain `new Date(...)` — no special handling
+   needed once the write side is correct. A daily's `nextDue[]` was never affected by any of this
+   — it's computed server-side already timezone-aware (from `user.preferences.timezoneOffset`, see
+   `website/common/script/cron.js` in the Habitica repo).
 
 ---
 
