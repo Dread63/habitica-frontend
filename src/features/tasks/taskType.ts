@@ -39,3 +39,14 @@ export const TASK_TYPE_META: Record<TaskType, TaskTypeMeta> = {
   todo: { icon: ListChecks, accent: 'var(--primary)', label: 'To-Do' },
   reward: { icon: Gift, accent: '#F0A93A', label: 'Reward' },
 }
+
+/**
+ * Whether a task type represents time-spendable work — i.e. can be placed
+ * on the timeline or focused on in a pomodoro session. Rewards are things
+ * you buy, not do, so they're excluded from both. Lives here (not in the
+ * timeline feature) because both features share the rule and this is the
+ * one file that already owns per-type facts.
+ */
+export function isSchedulableTaskType(type: TaskType): boolean {
+  return type !== 'reward'
+}

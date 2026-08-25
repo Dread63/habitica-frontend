@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { habiticaClient } from '@/lib/habitica/client'
 import type { Task } from '@/lib/habitica/types'
@@ -33,4 +34,33 @@ export function useCompletedTodos(enabled: boolean) {
     enabled,
     staleTime: 60_000,
   })
+}
+
+/**
+ * Every task the app can resolve by id, *including completed to-dos* —
+ * needed anywhere a stored id has to survive being ticked off.
+ *
+ * This exists because of a real bug: completing a scheduled to-do made its
+ * timeline block render as "Deleted task". The cause isn't deletion at all —
+ * `GET /tasks/user` simply stops returning a to-do once it's complete (see
+ * `useCompletedTodos`), so any feature holding an id (timeline placements,
+ * pomodoro links) lost the ability to name it. Merging both queries fixes
+ * the lookup at the source instead of special-casing the symptom in each
+ * renderer.
+ *
+ * Costs one extra request per stale window on pages that call it — well
+ * inside the 30/60s rate limit, deduped by TanStack Query, and it warms the
+ * cache the Dashboard's "Show completed" toggle reads from. Callers that
+ * only need open tasks (the pomodoro task picker) should stay on `useTasks`.
+ */
+export function useTaskLookup(): ReadonlyMap<string, Task> {
+  const tasksQuery = useTasks()
+  const completedQuery = useCompletedTodos(true)
+  return useMemo(() => {
+    const map = new Map<string, Task>()
+    for (const task of completedQuery.data ?? []) map.set(task.id, task)
+    // Open tasks win any id collision — they're the authoritative copy.
+    for (const task of tasksQuery.data ?? []) map.set(task.id, task)
+    return map
+  }, [tasksQuery.data, completedQuery.data])
 }

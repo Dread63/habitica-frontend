@@ -47,6 +47,31 @@
   --destructive-foreground: #ffffff;
   --ring: color-mix(in oklab, var(--primary) 50%, transparent);
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Categorical chart palette — pomodoro focus categories (see
+     features/pomodoro/pomodoroCategories.ts). A *third* color system, kept
+     deliberately separate from taskColor.ts's task-value aging scale and
+     taskType.ts's per-type accents, because it encodes a different thing
+     again: which of the user's tracked tags a block of time belongs to.
+     Slots are handed out in fixed order and never cycled.
+
+     These eight hues are not hand-picked: they're the validated categorical
+     palette from the dataviz skill, re-run against *this app's* real card
+     surfaces (#ffffff light, #16151f dark) rather than trusted from the
+     reference doc. Both modes pass the lightness-band, chroma-floor,
+     CVD-separation and normal-vision checks; light mode warns on contrast
+     for slots 3/4/5, which is why every category readout in this app carries
+     a visible text label and minute count rather than relying on the swatch
+     alone (the "relief rule"). Don't reorder or re-hex these without
+     re-running scripts/validate_palette.js for both surfaces. */
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #eda100;
+  --cat-5: #e87ba4;
+  --cat-6: #008300;
+  --cat-7: #4a3aa7;
+  --cat-8: #e34948;
 }
 
 /* ThemeProvider always resolves 'system' to an explicit .light/.dark class
@@ -67,6 +92,17 @@
   --primary-foreground: #0e0a24;
   --destructive: #e5675c;
   --destructive-foreground: #250705;
+
+  /* The same eight hues re-stepped for the dark surface — a selected dark
+     palette, not an automatic flip of the light one. */
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #c98500;
+  --cat-5: #d55181;
+  --cat-6: #008300;
+  --cat-7: #9085e9;
+  --cat-8: #e66767;
 }
 
 body {

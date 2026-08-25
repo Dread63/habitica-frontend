@@ -12,12 +12,16 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { cn } from '@/lib/utils'
 import { emojify } from '@/lib/emoji'
 import { useTwemoji } from '@/lib/useTwemoji'
-import { parseDateOnlyString, toApiDateTime, toDateOnlyString } from '@/lib/dateOnly'
+import { parseDateOnlyString, toApiDateTime, toDateOnlyString, today } from '@/lib/dateOnly'
+import { formatMinutesOfDay } from '@/lib/timeOfDay'
+import { ScheduleFields } from '@/features/timeline/ScheduleFields'
+import { entryForTaskOnDate } from '@/features/timeline/timelineEntries'
+import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
 import { useCreateTask, useUpdateTask } from './taskMutations'
 import { useTags } from './useTags'
 import { PRIORITY_LABELS } from './priority'
 import { ChecklistSection } from './ChecklistSection'
-import { TASK_TYPE_META } from './taskType'
+import { TASK_TYPE_META, isSchedulableTaskType } from './taskType'
 import { formatDueDate, getDueDate } from './taskDueDate'
 import type { CreateTaskInput, DailyRepeat, Task, TaskPriority, TaskType } from '@/lib/habitica/types'
 
@@ -125,7 +129,13 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-type TaskEditorDialogProps = { mode: 'create'; type: TaskType } | { mode: 'edit'; task: Task }
+type TaskEditorDialogProps = ({ mode: 'create'; type: TaskType } | { mode: 'edit'; task: Task }) & {
+  /** Fires on the underlying <dialog>'s close event (Esc, backdrop, or
+   * `.close()`). Card call sites keep the dialog mounted and ignore this;
+   * the timeline mounts one on demand per clicked block and uses it to
+   * unmount again. */
+  onClose?: () => void
+}
 
 export interface TaskEditorHandle {
   /** Edit mode defaults to 'view' (the read-focused detail layout) when no
@@ -187,6 +197,7 @@ export const TaskEditorDialog = React.forwardRef<TaskEditorHandle, TaskEditorDia
       title={title}
       icon={<TypeIcon className="size-4" style={{ color: accent }} aria-hidden="true" />}
       size="lg"
+      onClose={props.onClose}
     >
       {showForm ? (
         <form className="flex flex-col gap-3" onSubmit={handleSubmit}>
@@ -298,6 +309,17 @@ export const TaskEditorDialog = React.forwardRef<TaskEditorHandle, TaskEditorDia
             </Field>
           )}
 
+          {/* Timeline scheduling is local-only state keyed by task id, so it
+              deliberately lives outside FormState/toInput (those mirror
+              Habitica's request body exactly) and outside this form's submit
+              — ScheduleFields reads/writes its own store directly, and only
+              exists in edit mode since a not-yet-created task has no id. */}
+          {props.mode === 'edit' && isSchedulableTaskType(type) && (
+            <Field label="Timeline (this app only)">
+              <ScheduleFields task={props.task} />
+            </Field>
+          )}
+
           {tagsQuery.data && tagsQuery.data.length > 0 && (
             <Field label="Tags">
               <div className="flex flex-wrap gap-2">
@@ -374,6 +396,13 @@ function TaskDetailView({ task, tagNames, onEdit }: { task: Task; tagNames: stri
   const [editingField, setEditingField] = React.useState<'text' | 'notes' | null>(null)
   const [textDraft, setTextDraft] = React.useState(task.text)
   const [notesDraft, setNotesDraft] = React.useState(task.notes)
+
+  // Read-only summary; the set/clear controls live in the form's Timeline
+  // field ("More fields"), avoiding two divergent interactive copies.
+  const timelineEntries = useTimelineEntryStore((s) => s.entries)
+  const todayEntry = isSchedulableTaskType(task.type)
+    ? entryForTaskOnDate(timelineEntries, task.id, toDateOnlyString(today()))
+    : undefined
 
   // Stay in sync with the authoritative task once it changes (e.g. after
   // this save lands, or an unrelated background refetch) — but never while
@@ -503,6 +532,15 @@ function TaskDetailView({ task, tagNames, onEdit }: { task: Task; tagNames: stri
           <div className="flex items-center gap-1">
             <dt className="font-medium text-foreground">{task.type === 'daily' ? 'Next due' : 'Due'}</dt>
             <dd className="text-muted-foreground">{formatDueDate(dueDate)}</dd>
+          </div>
+        )}
+        {todayEntry && (
+          <div className="flex items-center gap-1">
+            <dt className="font-medium text-foreground">Timeline</dt>
+            <dd className="text-muted-foreground">
+              {formatMinutesOfDay(todayEntry.startMinutes)} –{' '}
+              {formatMinutesOfDay(todayEntry.startMinutes + todayEntry.durationMinutes)} today
+            </dd>
           </div>
         )}
         {task.type === 'habit' && (

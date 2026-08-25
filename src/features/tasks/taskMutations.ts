@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { habiticaClient } from '@/lib/habitica/client'
+import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
 import type { CreateTaskInput, HabiticaUser, ScoreTaskResult, Task, UpdateTaskInput } from '@/lib/habitica/types'
 
 function replaceTaskInCache(queryClient: QueryClient, updated: Task) {
@@ -125,6 +126,12 @@ export function useDeleteTask() {
       await queryClient.cancelQueries({ queryKey: ['tasks'] })
       const previous = queryClient.getQueryData<Task[]>(['tasks'])
       removeTaskFromCache(queryClient, taskId)
+      // Timeline placements for a deleted task are pure clutter — cascade
+      // locally, same as useDeleteTag's pruneTag. Not rolled back on error
+      // for the same reason stated there: re-placing a task that turned out
+      // not to be deleted is harmless and simpler than threading the
+      // pre-prune entries through the rollback path.
+      useTimelineEntryStore.getState().pruneTask(taskId)
       return { previous }
     },
     onError: (_err, _taskId, context) => {

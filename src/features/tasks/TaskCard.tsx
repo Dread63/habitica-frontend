@@ -2,7 +2,7 @@ import * as React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useQueryClient } from '@tanstack/react-query'
-import { CalendarClock, Circle, CircleCheck, ChevronUp, ChevronDown, Coins, Flame, Pencil, Trash2 } from 'lucide-react'
+import { CalendarClock, Circle, CircleCheck, ChevronUp, ChevronDown, Clock3, Coins, Flame, Pencil, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -12,6 +12,13 @@ import { useTwemoji } from '@/lib/useTwemoji'
 import type { HabiticaUser, Task } from '@/lib/habitica/types'
 import { useUser } from '@/features/user/useUser'
 import { useDensity } from '@/features/theme/DensityProvider'
+import { today, toDateOnlyString } from '@/lib/dateOnly'
+import { formatMinutesOfDay } from '@/lib/timeOfDay'
+import { entryForTaskOnDate } from '@/features/timeline/timelineEntries'
+import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
+import { TaskContextMenu } from '@/features/timeline/TaskContextMenu'
+import { SchedulePopover } from '@/features/timeline/SchedulePopover'
+import { isSchedulableTaskType } from './taskType'
 import { PRIORITY_LABELS } from './priority'
 import { getTaskColorSwatch } from './taskColor'
 import { formatDueDate, getDueDate, isOverdue } from './taskDueDate'
@@ -56,6 +63,14 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
   const editDialogRef = React.useRef<TaskEditorHandle>(null)
   const [scoreFlash, setScoreFlash] = React.useState<ScoreFlashData | null>(null)
   const flashTimeoutRef = React.useRef<number | undefined>(undefined)
+
+  // Timeline affordances (local-only scheduling — see features/timeline).
+  // Rewards are excluded everywhere: no context menu, no clock button, no badge.
+  const schedulable = isSchedulableTaskType(task.type)
+  const timelineEntries = useTimelineEntryStore((s) => s.entries)
+  const todayEntry = schedulable ? entryForTaskOnDate(timelineEntries, task.id, toDateOnlyString(today())) : undefined
+  const [contextMenu, setContextMenu] = React.useState<{ x: number; y: number } | null>(null)
+  const [schedulePopover, setSchedulePopover] = React.useState<{ x: number; y: number } | null>(null)
 
   // Undefined gold (query not loaded yet) reads as "affordable" rather than
   // false-disabling the button before we actually know.
@@ -111,6 +126,18 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
         isCompact ? 'gap-2 p-2' : 'gap-3 p-4',
       )}
       style={{ borderLeftColor: swatch.accent }}
+      onContextMenu={
+        schedulable
+          ? (event) => {
+              // Right-clicking an interactive child (a button, a link in the
+              // markdown notes) keeps the browser's own menu — same guard
+              // convention as the notes-click link passthrough below.
+              if ((event.target as HTMLElement).closest('button, a, input, textarea')) return
+              event.preventDefault()
+              setContextMenu({ x: event.clientX, y: event.clientY })
+            }
+          : undefined
+      }
     >
       <div className={cn('relative shrink-0 text-muted-foreground', isCompact ? 'mt-0.5' : 'mt-px')}>
         <Indicator
@@ -172,6 +199,22 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity hover:opacity-100">
+            {schedulable && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(isCompact ? 'h-6 w-6' : 'h-8 w-8', todayEntry && 'text-primary')}
+                aria-label={todayEntry ? `Reschedule ${task.text} on the timeline` : `Schedule ${task.text} on the timeline`}
+                title={todayEntry ? `On today's timeline at ${formatMinutesOfDay(todayEntry.startMinutes)}` : 'Schedule on timeline'}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setSchedulePopover({ x: rect.left + rect.width / 2, y: rect.bottom + 4 })
+                }}
+              >
+                <Clock3 className={isCompact ? 'size-3' : 'size-4'} />
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
@@ -226,6 +269,14 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
               <CalendarClock className={badgeIconClass} /> {formatDueDate(dueDate)}
             </span>
           )}
+          {todayEntry && (
+            <span
+              className={cn(badgeClass, 'inline-flex items-center gap-1 bg-primary/10 font-medium text-primary')}
+              title="Scheduled on today's timeline (this app only)"
+            >
+              <Clock3 className={badgeIconClass} /> {formatMinutesOfDay(todayEntry.startMinutes)}
+            </span>
+          )}
           {task.tags.map((tagId) => (
             <span key={tagId} className={cn(badgeClass, 'border border-border text-muted-foreground')}>
               {tagNamesById.get(tagId) ?? '…'}
@@ -235,6 +286,23 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
       </div>
 
       <TaskEditorDialog ref={editDialogRef} mode="edit" task={task} />
+      {contextMenu && (
+        <TaskContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          task={task}
+          onClose={() => setContextMenu(null)}
+          onOpenSchedule={() => setSchedulePopover(contextMenu)}
+        />
+      )}
+      {schedulePopover && (
+        <SchedulePopover
+          x={schedulePopover.x}
+          y={schedulePopover.y}
+          task={task}
+          onClose={() => setSchedulePopover(null)}
+        />
+      )}
     </Card>
   )
 }
