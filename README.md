@@ -40,16 +40,24 @@ it.
 
 ```sh
 npm install
-cp .env.example .env   # set VITE_HABITICA_CLIENT_ID to <your-habitica-user-id>-habitica-modern-frontend
-npm run dev
+npm run dev            # no configuration needed — see the note below
 ```
 
 ## Docker
 
 ```sh
-cp .env.example .env   # set VITE_HABITICA_CLIENT_ID here too
-docker compose up --build
+docker compose up --build          # http://localhost:8080
+HOST_PORT=9000 docker compose up --build   # ...or pick another port
 ```
+
+Deploying to a NAS or another always-on box? See **[docs/deploy-synology.md](docs/deploy-synology.md)** —
+prebuilt multi-arch images are published to `ghcr.io/dread63/habitica-frontend` on every push to
+`master`, so the target host never needs a build toolchain.
+
+**No build-time configuration.** The app used to require `VITE_HABITICA_CLIENT_ID` (Habitica's
+mandatory `x-client` header) to be set before building, which made every build personal to one
+account. That header is now derived from the user id you log in with, so a single published image
+works for anyone and there is nothing to configure before `npm run dev` or `docker compose up`.
 
 **Verified against a real Docker daemon** (OrbStack, macOS host) — first time this exact command
 has actually been run, not just inspected:

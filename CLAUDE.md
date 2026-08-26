@@ -32,14 +32,13 @@ versioned tags, a registry to publish to), not a correctness gap. See
 **Docker is now verified** (see "Phase 6 — Docker, actually verified" below for the full
 checklist and the `HEALTHCHECK` bug it found and fixed). What's left to do on a machine with a
 real Habitica account:
-1. `cp .env.example .env` (if you don't already have one), set `VITE_HABITICA_CLIENT_ID` to
-   `<your-habitica-user-id>-habitica-modern-frontend`
-2. `docker compose up --build`, then actually log in — the one thing that still hasn't been
-   checked end-to-end is auth against the real Habitica API from inside the container (everything
-   else — build, healthcheck, SPA fallback, asset caching — has been)
-3. From there: multi-arch build / versioned tags / a registry to publish to is the remaining
-   Phase 6 scope (a packaging decision, not a correctness fix) — or just start using the app daily
-   and let real usage surface what's actually missing before committing to Phase 5.
+1. `docker compose up --build` — there is **no** `.env` step any more; the app has no build-time
+   configuration at all (see "Deployment" below)
+2. Actually log in — the one thing that still hasn't been checked end-to-end is auth against the
+   real Habitica API from inside the container (everything else — build, healthcheck, SPA
+   fallback, asset caching, multi-arch — has been)
+3. Phase 6's packaging scope is **done**: multi-arch build, versioned tags and a registry all
+   ship — see `docs/deploy-synology.md`.
 
 What Phase 0 established:
 - **CORS is open** on the Habitica API (`access-control-allow-origin: *`, verified via a live
@@ -905,7 +904,12 @@ exclusion wins). Full spec incl. the revision history: `docs/implementation-plan
 ## Constraints to never violate
 
 - **`x-client` header is mandatory** on every Habitica API request (`<your-user-id>-<appname>`)
-  or the request is rejected outright. Baked in via `VITE_HABITICA_CLIENT_ID`.
+  or the request is rejected outright. **Derived** in `client.ts` as
+  `${credentials.userId}-habitica-modern-frontend` — the same user id already going out as
+  `x-api-user` — not read from config. It used to be the build-time `VITE_HABITICA_CLIENT_ID`;
+  that is gone, and **the app now has zero build-time configuration**. Keep it that way: any
+  `VITE_*` var added back has to be decided before the bundle is built, which forks the published
+  image per deployment and breaks the pull-to-update workflow.
 - **Rate limit: 30 requests/60s.** The API client must queue and back off on `429` using the
   `Retry-After` header — don't just let requests fail. TanStack Query's retry config should be
   tuned around this from the start, not bolted on later.
@@ -970,3 +974,44 @@ without checking), reward/XP feedback on scoring (data already available in `Sco
 just needs a toast/flash), a verify-then-maybe-fix item on task-color update timing after
 scoring, an expandable read-focused task detail view (distinct from the edit form), and a
 persisted compact/condensed density toggle. Default order is after Phase 3, not blocked on it.
+
+Phase 6 finished — publishing pipeline + Synology deployment (2026-08-26). The remaining Phase 6
+scope (multi-arch, versioned tags, a registry) is built, and the deployment target is a Synology
+NAS. Three forks settled via `AskUserQuestion` first: CI-built images on GHCR (over building on
+the NAS, which would run `npm ci` + `vite build` on NAS hardware), deriving the `x-client` header
+instead of baking it in, and LAN-only HTTP to start.
+
+- **The app now has *zero* build-time configuration**, and that's the change everything else here
+  depends on. `VITE_HABITICA_CLIENT_ID` is gone: `client.ts` derives `x-client` as
+  `${credentials.userId}-habitica-modern-frontend` from the user id it *already* sends as
+  `x-api-user` on the same request — available from the login form onward, including on the
+  pre-storage `verifyCredentials` call. Identical header value, no config. Without this a
+  published image is personal to whoever built it, which rules out one image + pull-to-update.
+  `src/vite-env.d.ts` is now a deliberately empty `ImportMetaEnv` with a note explaining why
+  adding a `VITE_*` var back is a bigger decision than it looks.
+- **`.github/workflows/publish-image.yml`** — a `verify` job (typecheck + lint + tests) gates a
+  `publish` job that builds `linux/amd64,linux/arm64` and pushes to
+  `ghcr.io/dread63/habitica-frontend`. Tags: `latest` on master, the git tag on `v*`, and
+  `sha-<short>` every time, so there is always a specific build to roll back to. A failing verify
+  publishes nothing.
+- **Dockerfile build stage pinned to `--platform=$BUILDPLATFORM`.** Its only output is static
+  files, which are architecture-independent, so emulating `npm ci` + `vite build` for arm64 would
+  be minutes of pure waste. Confirmed by a real two-platform buildx run: the Node build executes
+  **once**, natively, and only the nginx `COPY` layers are built per architecture.
+- **`deploy/synology/docker-compose.yml`** — image-based, no build context, no `environment:`
+  block, ready to paste into Container Manager → Project. The root `docker-compose.yml` stays
+  build-based for local work; the two are labelled so it's obvious which is which.
+- **`docs/deploy-synology.md`** — the full walkthrough: workflow push, GHCR package visibility
+  (private by default, and a private package means registry creds on the NAS), Container Manager
+  project, the update loop, rollback via `sha-`/`v*` tags, optional Watchtower scoped to this one
+  container, troubleshooting, and reverse-proxy/HTTPS as a later add-on.
+- **Verified for real this time, on a live Docker 29.7.2 daemon** (this session had one, unlike
+  the sandbox that wrote most of Phase 6): build succeeds (74.8 MB image), `/healthz` returns
+  `ok`, container reports **healthy** on the first probe, `/timeline` returns `200 text/html`
+  (SPA fallback), `index.html` is `no-cache` while hashed assets are `immutable`, and the
+  two-platform buildx build succeeds. Containers and the temporary buildx builder were torn down
+  afterwards.
+- **Still not verified**: logging in against a real Habitica account from inside the container.
+  It exercises `client.ts` against the live API rather than anything Docker-specific — and it's
+  now *more* worth doing than before, since the `x-client` derivation changed what goes on the
+  wire. It's step 5 of the deploy guide.

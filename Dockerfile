@@ -1,18 +1,23 @@
 # syntax=docker/dockerfile:1
 
 # --- build stage ---
-FROM node:22-alpine AS build
+# --platform=$BUILDPLATFORM pins this stage to the *builder's* architecture
+# instead of the target's. The stage's only output is a directory of static
+# files, which is architecture-independent, so there is nothing to gain from
+# running it under emulation — and plenty to lose: an emulated `npm ci` +
+# `vite build` for linux/arm64 takes minutes rather than seconds. Only the
+# nginx stage below is actually built per-architecture.
+#
+# The app has no build-time configuration at all (no ARGs, no VITE_* vars —
+# see src/vite-env.d.ts), which is what makes one published image usable by
+# any account rather than personal to whoever built it.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-
-# Vite inlines VITE_* env vars into the bundle at build time, not runtime —
-# it has to be a build ARG, not a compose `environment:` entry.
-ARG VITE_HABITICA_CLIENT_ID
-ENV VITE_HABITICA_CLIENT_ID=$VITE_HABITICA_CLIENT_ID
 RUN npm run build
 
 # --- serve stage ---

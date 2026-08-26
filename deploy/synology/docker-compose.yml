@@ -1,0 +1,19 @@
+# Paste this into Synology Container Manager → Project → Create.
+#
+# It pulls a prebuilt image, so nothing is compiled on the NAS. There is
+# deliberately no `environment:` block: the app has no runtime or build-time
+# configuration (the Habitica x-client header is derived from the user id you
+# log in with), and your credentials live in your browser, never on the NAS.
+#
+# Full walkthrough, including how to update: docs/deploy-synology.md
+services:
+  habitica-frontend:
+    image: ghcr.io/dread63/habitica-frontend:latest
+    container_name: habitica-frontend
+    ports:
+      # host:container. Change 8080 if something else on the NAS already uses
+      # it — DSM itself holds 5000/5001, and Web Station may hold 80/443.
+      - "8080:80"
+    restart: unless-stopped
+    # The image ships its own HEALTHCHECK (see the Dockerfile); Container
+    # Manager surfaces it as the container's health status.

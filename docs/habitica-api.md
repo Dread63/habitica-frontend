@@ -52,7 +52,7 @@ Every authenticated request needs **three** headers:
 |---|---|---|
 | `x-api-user` | the user's Habitica User ID | from `habitica.com/user/settings/api` |
 | `x-api-key` | the user's API Token | same page. This is a bearer credential — treat it like a password. |
-| `x-client` | `<your-habitica-user-id>-<appname>` | **Mandatory as of mid-2025 — requests without it are rejected outright.** This is *your* (the developer's) Habitica User ID plus a name for this app, e.g. `4c079...-habitica-modern-frontend`. It's not auto-generated; bake it in once via `VITE_HABITICA_CLIENT_ID`. |
+| `x-client` | `<your-habitica-user-id>-<appname>` | **Mandatory as of mid-2025 — requests without it are rejected outright.** This is *your* (the developer's) Habitica User ID plus a name for this app, e.g. `4c079...-habitica-modern-frontend`. It's not auto-generated. This app **derives it** as `${userId}-habitica-modern-frontend` from the same user id it already sends as `x-api-user` (see `lib/habitica/client.ts`) rather than taking it from build-time config — the value is identical, and it keeps the built bundle free of any per-account setup. |
 
 **CORS — confirmed open, verified directly against the live API (not assumed):**
 
