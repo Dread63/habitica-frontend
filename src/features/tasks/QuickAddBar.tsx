@@ -1,12 +1,14 @@
 import * as React from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { CalendarClock, Plus } from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import { parseDateOnlyString, toApiDateTime } from '@/lib/dateOnly'
 import type { Tag } from '@/lib/habitica/types'
 import { useTags } from './useTags'
 import { useCreateTag } from '@/features/tags/tagMutations'
 import { useCreateTask } from './taskMutations'
 import { parseQuickAdd } from './quickAdd'
+import { formatDueDate } from './taskDueDate'
 import { PRIORITY_LABELS } from './priority'
 import { TASK_TYPE_META } from './taskType'
 
@@ -36,7 +38,7 @@ async function resolveTagIds(
   return ids
 }
 
-export function QuickAddBar() {
+export function QuickAddBar({ inputRef }: { inputRef?: React.RefObject<HTMLInputElement | null> }) {
   const [value, setValue] = React.useState('')
   const [error, setError] = React.useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = React.useState(false)
@@ -48,6 +50,11 @@ export function QuickAddBar() {
   const parsed = React.useMemo(() => parseQuickAdd(value), [value])
   const typeMeta = TASK_TYPE_META[parsed.type]
   const TypeIcon = typeMeta.icon
+  // parseQuickAdd's `date` is a local "YYYY-MM-DD" — parsed once here, both
+  // for the human-readable preview label and (via toApiDateTime) for what
+  // actually gets sent to the API on submit.
+  const parsedDate = React.useMemo(() => (parsed.date ? parseDateOnlyString(parsed.date) : null), [parsed.date])
+  const parsedDateLabel = parsedDate ? formatDueDate(parsedDate) : null
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -64,6 +71,11 @@ export function QuickAddBar() {
         type: parsed.type,
         priority: parsed.priority,
         tags: tagIds,
+        // Habitica ignores `date` for non-todo types (docs/habitica-api.md
+        // § Footguns), so this is safe to send unconditionally rather than
+        // gating on `parsed.type === 'todo'`. toApiDateTime, not the raw
+        // "YYYY-MM-DD" string — see its comment in lib/dateOnly.ts.
+        ...(parsedDate ? { date: toApiDateTime(parsedDate) } : {}),
       })
       setValue('')
     } catch (err) {
@@ -78,9 +90,12 @@ export function QuickAddBar() {
       <div className="flex items-center gap-2">
         <Plus className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <Input
+          ref={inputRef}
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder={'Add a task… #tag or #"multi word tag"  /habit /daily /reward  ! medium  !! hard  ~ trivial'}
+          placeholder={
+            'Add a task… #tag or #"multi word tag"  /habit /daily /reward  @tomorrow @friday @8/11  ! medium  !! hard  ~ trivial'
+          }
           disabled={isSubmitting}
           aria-label="Quick add task"
           className="flex-1"
@@ -95,6 +110,12 @@ export function QuickAddBar() {
           </span>
           <span aria-hidden="true">·</span>
           <span>{PRIORITY_LABELS[parsed.priority]}</span>
+          {parsedDateLabel && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5">
+              <CalendarClock className="size-3" aria-hidden="true" />
+              {parsedDateLabel}
+            </span>
+          )}
           {parsed.tagNames.map((name) => (
             <span key={name} className="rounded-full bg-muted px-1.5 py-0.5">
               #{name}

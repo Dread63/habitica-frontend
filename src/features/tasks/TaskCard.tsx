@@ -2,16 +2,26 @@ import * as React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useQueryClient } from '@tanstack/react-query'
-import { Circle, CircleCheck, ChevronUp, ChevronDown, Coins, Flame, Pencil, Trash2 } from 'lucide-react'
+import { CalendarClock, Circle, CircleCheck, ChevronUp, ChevronDown, Clock3, Coins, Flame, Pencil, Trash2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { confirmDialog } from '@/components/ui/confirmStore'
+import { emojify } from '@/lib/emoji'
 import { useTwemoji } from '@/lib/useTwemoji'
 import type { HabiticaUser, Task } from '@/lib/habitica/types'
 import { useUser } from '@/features/user/useUser'
 import { useDensity } from '@/features/theme/DensityProvider'
+import { today, toDateOnlyString } from '@/lib/dateOnly'
+import { formatMinutesOfDay } from '@/lib/timeOfDay'
+import { entryForTaskOnDate } from '@/features/timeline/timelineEntries'
+import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
+import { TaskContextMenu } from '@/features/timeline/TaskContextMenu'
+import { SchedulePopover } from '@/features/timeline/SchedulePopover'
+import { isSchedulableTaskType } from './taskType'
 import { PRIORITY_LABELS } from './priority'
 import { getTaskColorSwatch } from './taskColor'
+import { formatDueDate, getDueDate, isOverdue } from './taskDueDate'
 import { TaskEditorDialog, type TaskEditorHandle } from './TaskEditorDialog'
 import { ChecklistSection } from './ChecklistSection'
 import { useDeleteTask, useScoreTask } from './taskMutations'
@@ -38,6 +48,8 @@ interface ScoreFlashData {
  */
 export function TaskCard({ task, tagNamesById }: TaskCardProps) {
   const swatch = getTaskColorSwatch(task)
+  const dueDate = getDueDate(task)
+  const overdue = isOverdue(task)
   const textRef = useTwemoji<HTMLParagraphElement>([task.text])
   const notesRef = useTwemoji<HTMLDivElement>([task.notes])
   const checklist = 'checklist' in task ? task.checklist : undefined
@@ -52,9 +64,24 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
   const [scoreFlash, setScoreFlash] = React.useState<ScoreFlashData | null>(null)
   const flashTimeoutRef = React.useRef<number | undefined>(undefined)
 
+  // Timeline affordances (local-only scheduling — see features/timeline).
+  // Rewards are excluded everywhere: no context menu, no clock button, no badge.
+  const schedulable = isSchedulableTaskType(task.type)
+  const timelineEntries = useTimelineEntryStore((s) => s.entries)
+  const todayEntry = schedulable ? entryForTaskOnDate(timelineEntries, task.id, toDateOnlyString(today())) : undefined
+  const [contextMenu, setContextMenu] = React.useState<{ x: number; y: number } | null>(null)
+  const [schedulePopover, setSchedulePopover] = React.useState<{ x: number; y: number } | null>(null)
+
   // Undefined gold (query not loaded yet) reads as "affordable" rather than
   // false-disabling the button before we actually know.
   const canAffordReward = task.type !== 'reward' || (userQuery.data?.stats.gp ?? Infinity) >= task.value
+
+  // Metadata pills: readable at comfortable density (the 11px they used to
+  // be sat below what's comfortable to scan), still tight in compact.
+  const badgeClass = isCompact
+    ? 'rounded-full px-2 py-0.5 text-[11px]'
+    : 'rounded-full px-2.5 py-1 text-xs'
+  const badgeIconClass = isCompact ? 'size-3' : 'size-3.5'
 
   React.useEffect(() => () => window.clearTimeout(flashTimeoutRef.current), [])
 
@@ -81,10 +108,14 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
     )
   }
 
-  function handleDelete() {
-    if (window.confirm(`Delete "${task.text}"? This can't be undone.`)) {
-      deleteTask.mutate(task.id)
-    }
+  async function handleDelete() {
+    const confirmed = await confirmDialog({
+      title: 'Delete task?',
+      message: `Delete "${task.text}"? This can't be undone.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    })
+    if (confirmed) deleteTask.mutate(task.id)
   }
 
   return (
@@ -92,16 +123,29 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
       className={cn(
         'flex items-start border-l-4 transition-shadow duration-150 hover:shadow-md',
         'animate-[task-in_180ms_ease-out]',
-        isCompact ? 'gap-2 p-2' : 'gap-3 p-3',
+        isCompact ? 'gap-2 p-2' : 'gap-3 p-4',
       )}
       style={{ borderLeftColor: swatch.accent }}
+      onContextMenu={
+        schedulable
+          ? (event) => {
+              // Right-clicking an interactive child (a button, a link in the
+              // markdown notes) keeps the browser's own menu — same guard
+              // convention as the notes-click link passthrough below.
+              if ((event.target as HTMLElement).closest('button, a, input, textarea')) return
+              event.preventDefault()
+              setContextMenu({ x: event.clientX, y: event.clientY })
+            }
+          : undefined
+      }
     >
-      <div className="relative mt-0.5 shrink-0 text-muted-foreground">
+      <div className={cn('relative shrink-0 text-muted-foreground', isCompact ? 'mt-0.5' : 'mt-px')}>
         <Indicator
           task={task}
           isScoring={scoreTask.isPending}
           onScore={handleScore}
           canAffordReward={canAffordReward}
+          isCompact={isCompact}
         />
         {scoreFlash && <ScoreFlash data={scoreFlash} />}
       </div>
@@ -125,11 +169,12 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
               <p
                 ref={textRef}
                 className={cn(
-                  'text-sm leading-snug',
+                  'leading-snug',
+                  isCompact ? 'text-sm' : 'text-base',
                   'completed' in task && task.completed && 'text-muted-foreground line-through',
                 )}
               >
-                {task.text}
+                {emojify(task.text)}
               </p>
             </button>
             {/* Compact density skips the notes preview entirely (that's the
@@ -143,37 +188,53 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
                   editDialogRef.current?.open('view')
                 }}
                 className={cn(
-                  'prose prose-sm line-clamp-3 max-w-none cursor-pointer text-xs text-muted-foreground',
-                  'prose-p:my-0.5 prose-headings:my-1 prose-headings:text-foreground',
+                  'prose prose-sm line-clamp-3 max-w-none cursor-pointer text-sm text-muted-foreground',
+                  'prose-p:my-1 prose-headings:my-1 prose-headings:text-foreground',
                   'prose-a:text-primary prose-strong:text-foreground prose-li:my-0',
                   'dark:prose-invert',
                 )}
               >
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{task.notes}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{emojify(task.notes)}</ReactMarkdown>
               </div>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity hover:opacity-100">
+            {schedulable && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(isCompact ? 'h-6 w-6' : 'h-8 w-8', todayEntry && 'text-primary')}
+                aria-label={todayEntry ? `Reschedule ${task.text} on the timeline` : `Schedule ${task.text} on the timeline`}
+                title={todayEntry ? `On today's timeline at ${formatMinutesOfDay(todayEntry.startMinutes)}` : 'Schedule on timeline'}
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setSchedulePopover({ x: rect.left + rect.width / 2, y: rect.bottom + 4 })
+                }}
+              >
+                <Clock3 className={isCompact ? 'size-3' : 'size-4'} />
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className={isCompact ? 'h-6 w-6' : 'h-8 w-8'}
               aria-label={`Edit ${task.text}`}
               onClick={() => editDialogRef.current?.open('form')}
             >
-              <Pencil className="size-3" />
+              <Pencil className={isCompact ? 'size-3' : 'size-4'} />
             </Button>
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="h-6 w-6"
+              className={isCompact ? 'h-6 w-6' : 'h-8 w-8'}
               aria-label={`Delete ${task.text}`}
               disabled={deleteTask.isPending}
               onClick={handleDelete}
             >
-              <Trash2 className="size-3" />
+              <Trash2 className={isCompact ? 'size-3' : 'size-4'} />
             </Button>
           </div>
         </div>
@@ -182,25 +243,42 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
           <ChecklistSection taskId={task.id} items={checklist} summaryOnly={isCompact} />
         )}
 
-        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-          <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+        <div className={cn('flex flex-wrap items-center gap-1.5', isCompact ? 'pt-0.5' : 'pt-1')}>
+          <span className={cn(badgeClass, 'bg-muted font-medium text-muted-foreground')}>
             {PRIORITY_LABELS[task.priority]}
           </span>
           {task.type === 'daily' && task.streak > 0 && (
-            <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-              <Flame className="size-3" /> {task.streak}
+            <span className={cn(badgeClass, 'inline-flex items-center gap-1 bg-muted font-medium text-muted-foreground')}>
+              <Flame className={badgeIconClass} /> {task.streak}
             </span>
           )}
           {task.type === 'reward' && (
-            <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-              <Coins className="size-3" /> {task.value}
+            <span className={cn(badgeClass, 'inline-flex items-center gap-1 bg-muted font-medium text-muted-foreground')}>
+              <Coins className={badgeIconClass} /> {task.value}
+            </span>
+          )}
+          {dueDate && (
+            <span
+              className={cn(
+                badgeClass,
+                'inline-flex items-center gap-1 font-medium',
+                overdue ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground',
+              )}
+              title={overdue ? 'Overdue' : task.type === 'daily' ? 'Next due' : 'Due date'}
+            >
+              <CalendarClock className={badgeIconClass} /> {formatDueDate(dueDate)}
+            </span>
+          )}
+          {todayEntry && (
+            <span
+              className={cn(badgeClass, 'inline-flex items-center gap-1 bg-primary/10 font-medium text-primary')}
+              title="Scheduled on today's timeline (this app only)"
+            >
+              <Clock3 className={badgeIconClass} /> {formatMinutesOfDay(todayEntry.startMinutes)}
             </span>
           )}
           {task.tags.map((tagId) => (
-            <span
-              key={tagId}
-              className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground"
-            >
+            <span key={tagId} className={cn(badgeClass, 'border border-border text-muted-foreground')}>
               {tagNamesById.get(tagId) ?? '…'}
             </span>
           ))}
@@ -208,6 +286,23 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
       </div>
 
       <TaskEditorDialog ref={editDialogRef} mode="edit" task={task} />
+      {contextMenu && (
+        <TaskContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          task={task}
+          onClose={() => setContextMenu(null)}
+          onOpenSchedule={() => setSchedulePopover(contextMenu)}
+        />
+      )}
+      {schedulePopover && (
+        <SchedulePopover
+          x={schedulePopover.x}
+          y={schedulePopover.y}
+          task={task}
+          onClose={() => setSchedulePopover(null)}
+        />
+      )}
     </Card>
   )
 }
@@ -234,37 +329,53 @@ function ScoreFlash({ data }: { data: ScoreFlashData }) {
   )
 }
 
+/**
+ * The primary interaction on every card — scoring. At comfortable density
+ * these get a real hit target (a padded ~32px box around a size-5 icon)
+ * rather than a bare icon: they were previously small enough to be fiddly
+ * to hit, which is a bad trait for the control you press most often.
+ * Compact keeps the old tighter sizing, since that's the point of compact.
+ */
 function Indicator({
   task,
   onScore,
   isScoring,
   canAffordReward,
+  isCompact,
 }: {
   task: Task
   onScore: (direction: 'up' | 'down') => void
   isScoring: boolean
   canAffordReward: boolean
+  isCompact: boolean
 }) {
+  const hit = cn(
+    'flex items-center justify-center rounded-md transition-[transform,background-color] active:scale-90',
+    'hover:bg-muted disabled:hover:bg-transparent disabled:active:scale-100',
+    isCompact ? 'size-5' : 'size-8',
+  )
+  const icon = isCompact ? 'size-4' : 'size-5'
+
   if (task.type === 'habit') {
     return (
-      <div className="flex flex-col items-center gap-0.5">
+      <div className={cn('flex flex-col items-center', isCompact ? 'gap-0.5' : 'gap-1')}>
         <button
           type="button"
           disabled={!task.up || isScoring}
           onClick={() => onScore('up')}
           aria-label="Score up"
-          className="transition-transform active:scale-90 disabled:opacity-25 disabled:active:scale-100"
+          className={cn(hit, 'disabled:opacity-25')}
         >
-          <ChevronUp className="size-3.5" />
+          <ChevronUp className={icon} />
         </button>
         <button
           type="button"
           disabled={!task.down || isScoring}
           onClick={() => onScore('down')}
           aria-label="Score down"
-          className="transition-transform active:scale-90 disabled:opacity-25 disabled:active:scale-100"
+          className={cn(hit, 'disabled:opacity-25')}
         >
-          <ChevronDown className="size-3.5" />
+          <ChevronDown className={icon} />
         </button>
       </div>
     )
@@ -277,9 +388,9 @@ function Indicator({
         onClick={() => onScore('up')}
         aria-label={`Buy ${task.text}`}
         title={canAffordReward ? undefined : 'Not enough gold'}
-        className="transition-transform active:scale-90 disabled:opacity-40 disabled:active:scale-100"
+        className={cn(hit, 'disabled:opacity-40')}
       >
-        <Coins className="size-4" />
+        <Coins className={icon} />
       </button>
     )
   }
@@ -290,9 +401,9 @@ function Indicator({
       disabled={isScoring}
       onClick={() => onScore(task.completed ? 'down' : 'up')}
       aria-label={task.completed ? 'Mark incomplete' : 'Mark complete'}
-      className="transition-transform active:scale-90"
+      className={hit}
     >
-      {task.completed ? <CircleCheck className="size-4 text-primary" /> : <Circle className="size-4" />}
+      {task.completed ? <CircleCheck className={cn(icon, 'text-primary')} /> : <Circle className={icon} />}
     </button>
   )
 }

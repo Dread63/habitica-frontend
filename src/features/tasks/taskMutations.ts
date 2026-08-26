@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { habiticaClient } from '@/lib/habitica/client'
+import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
 import type { CreateTaskInput, HabiticaUser, ScoreTaskResult, Task, UpdateTaskInput } from '@/lib/habitica/types'
 
 function replaceTaskInCache(queryClient: QueryClient, updated: Task) {
@@ -69,12 +70,40 @@ export function useScoreTask() {
   })
 }
 
+/**
+ * New tasks land at the top of their list, not the bottom Habitica's API
+ * defaults to. That's not just a local display trick — `move/to/0` (see
+ * docs/vendor/tasks.controller.js, `0 = top of the list`) persists the
+ * order server-side too, so it survives the next refetch/invalidation
+ * instead of the task reverting to wherever the server would otherwise have
+ * appended it.
+ *
+ * The move call is best-effort, deliberately swallowed on failure — this is
+ * the fix for a real, confirmed bug: with an unguarded `await`, any failure
+ * here (a 429 that outlasts the rate limiter's retries, a transient network
+ * blip, anything) rejected the whole mutation, so `onSuccess` never ran and
+ * a task that *was* genuinely created server-side (visible on habitica.com)
+ * never made it into the local cache — reported as "creates it but doesn't
+ * show it in our app." Reordering is a nice-to-have on top of a successful
+ * create, not a condition of it actually showing up.
+ */
 export function useCreateTask() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (input: CreateTaskInput) => habiticaClient.post<Task>('/tasks/user', input),
+    mutationFn: async (input: CreateTaskInput) => {
+      const created = await habiticaClient.post<Task>('/tasks/user', input)
+      try {
+        await habiticaClient.post(`/tasks/${created.id}/move/to/0`)
+      } catch {
+        // Non-fatal — see comment above. The task still shows, just
+        // wherever the server would otherwise have placed it (still
+        // corrected on the next full refetch, since ['tasks'] isn't the
+        // only thing that keeps the UI in sync over a session).
+      }
+      return created
+    },
     onSuccess: (created) => {
-      queryClient.setQueryData<Task[]>(['tasks'], (old) => (old ? [...old, created] : [created]))
+      queryClient.setQueryData<Task[]>(['tasks'], (old) => (old ? [created, ...old] : [created]))
     },
   })
 }
@@ -97,6 +126,12 @@ export function useDeleteTask() {
       await queryClient.cancelQueries({ queryKey: ['tasks'] })
       const previous = queryClient.getQueryData<Task[]>(['tasks'])
       removeTaskFromCache(queryClient, taskId)
+      // Timeline placements for a deleted task are pure clutter — cascade
+      // locally, same as useDeleteTag's pruneTag. Not rolled back on error
+      // for the same reason stated there: re-placing a task that turned out
+      // not to be deleted is harmless and simpler than threading the
+      // pre-prune entries through the rollback path.
+      useTimelineEntryStore.getState().pruneTask(taskId)
       return { previous }
     },
     onError: (_err, _taskId, context) => {

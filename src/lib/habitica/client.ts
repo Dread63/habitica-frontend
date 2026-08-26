@@ -5,7 +5,26 @@ import type { HabiticaEnvelope, HabiticaErrorBody, HabiticaUser } from './types'
 const BASE_URL = 'https://habitica.com/api/v3'
 const MAX_429_RETRIES = 3
 
-const CLIENT_ID = import.meta.env.VITE_HABITICA_CLIENT_ID
+/** The `<appname>` half of the mandatory `x-client` header. */
+const APP_NAME = 'habitica-modern-frontend'
+
+/**
+ * Habitica requires `x-client: <user-id>-<appname>` on every request (see
+ * docs/habitica-api.md) and rejects anything without it.
+ *
+ * This used to be a build-time constant, `VITE_HABITICA_CLIENT_ID`, which
+ * every deployment had to set to its own `<user-id>-habitica-modern-frontend`
+ * before building. That was never necessary: the user id in that header is
+ * the same one already being sent as `x-api-user` on the very same request,
+ * and it's available from the moment the login form is filled in — including
+ * on the credential-verification call, which runs before anything is stored.
+ * Deriving it removes the app's only build-time configuration, which is what
+ * makes a single prebuilt image usable by anyone (see docs/deploy-synology.md)
+ * rather than being personal to whoever built it.
+ */
+function clientHeader(credentials: HabiticaCredentials): string {
+  return `${credentials.userId}-${APP_NAME}`
+}
 
 const limiter = new RateLimiter()
 
@@ -35,15 +54,6 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   if (!credentials) {
     throw new HabiticaApiError(401, undefined, 'No Habitica credentials stored — log in first.')
   }
-  if (!CLIENT_ID) {
-    // Fail loudly at request time rather than silently sending a request
-    // Habitica will reject anyway — see docs/habitica-api.md § Footguns.
-    throw new Error(
-      'VITE_HABITICA_CLIENT_ID is not set. Copy .env.example to .env and set it — Habitica ' +
-        'rejects every request that lacks a valid x-client header.',
-    )
-  }
-
   await limiter.acquire()
 
   const response = await fetch(`${BASE_URL}${path}`, {
@@ -52,7 +62,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       'Content-Type': 'application/json',
       'x-api-user': credentials.userId,
       'x-api-key': credentials.apiToken,
-      'x-client': CLIENT_ID,
+      'x-client': clientHeader(credentials),
     },
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   })

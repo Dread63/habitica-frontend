@@ -3,6 +3,8 @@ import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react'
 import { Dialog, type DialogHandle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { confirmDialog } from '@/components/ui/confirmStore'
+import { promptDialog } from '@/components/ui/promptStore'
 import { useTags } from '@/features/tasks/useTags'
 import { useCreateTag, useDeleteTag, useRenameTag, useReorderTag } from './tagMutations'
 
@@ -32,19 +34,21 @@ export const TagManagerDialog = React.forwardRef<DialogHandle>((_props, ref) => 
     createTag.mutate(name, { onSuccess: () => setNewName('') })
   }
 
-  function handleRename(tagId: string, currentName: string) {
-    // window.prompt is a deliberate placeholder, same as the delete-task
-    // confirm in TaskCard — revisit with a real inline editor in Phase 4.
-    const name = window.prompt('Rename tag:', currentName)
+  async function handleRename(tagId: string, currentName: string) {
+    const name = await promptDialog({ title: 'Rename tag', label: 'Tag name', defaultValue: currentName, confirmLabel: 'Rename' })
     if (name && name.trim() && name.trim() !== currentName) {
       renameTag.mutate({ tagId, name: name.trim() })
     }
   }
 
-  function handleDelete(tagId: string, name: string) {
-    if (window.confirm(`Delete tag "${name}"? It will be removed from every task that has it.`)) {
-      deleteTag.mutate(tagId)
-    }
+  async function handleDelete(tagId: string, name: string) {
+    const confirmed = await confirmDialog({
+      title: 'Delete tag?',
+      message: `Delete tag "${name}"? It will be removed from every task that has it.`,
+      confirmLabel: 'Delete',
+      destructive: true,
+    })
+    if (confirmed) deleteTag.mutate(tagId)
   }
 
   const tags = tagsQuery.data ?? []

@@ -2,6 +2,7 @@ import * as React from 'react'
 import { Settings, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { type DialogHandle } from '@/components/ui/dialog'
+import { promptDialog } from '@/components/ui/promptStore'
 import { cn } from '@/lib/utils'
 import { useTags } from '@/features/tasks/useTags'
 import { isTagFilterEmpty, stateOf } from './tagFilter'
@@ -12,7 +13,8 @@ import { TagManagerDialog } from './TagManagerDialog'
 export function TagFilterSidebar() {
   const tagsQuery = useTags()
   const filter = useTagFilterStore((s) => s.filter)
-  const cycleTag = useTagFilterStore((s) => s.cycleTag)
+  const toggleTagIncluded = useTagFilterStore((s) => s.toggleTagIncluded)
+  const toggleTagExcluded = useTagFilterStore((s) => s.toggleTagExcluded)
   const setMode = useTagFilterStore((s) => s.setMode)
   const clearFilter = useTagFilterStore((s) => s.clearFilter)
   const presets = useTagFilterStore((s) => s.presets)
@@ -21,16 +23,18 @@ export function TagFilterSidebar() {
   const deletePreset = useTagFilterStore((s) => s.deletePreset)
   const managerRef = React.useRef<DialogHandle>(null)
 
-  function handleSavePreset() {
-    // window.prompt is a deliberate placeholder — see TagManagerDialog's note.
-    const name = window.prompt('Name this filter:')
+  async function handleSavePreset() {
+    const name = await promptDialog({ title: 'Save filter', label: 'Name this filter', confirmLabel: 'Save' })
     if (name && name.trim()) savePreset(name.trim())
   }
 
   const tags = tagsQuery.data ?? []
 
   return (
-    <aside className="flex w-full shrink-0 flex-col gap-4 lg:w-56">
+    // No width classes here — the parent wrapper in Dashboard.tsx (also
+    // holding the Habits/Dailies/Rewards rail below this) owns the width,
+    // so both pieces of the left column stay the same size.
+    <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Tags</h2>
         <Button
@@ -49,7 +53,13 @@ export function TagFilterSidebar() {
         <>
           <div className="flex flex-wrap gap-1.5">
             {tags.map((tag) => (
-              <TagChip key={tag.id} name={tag.name} state={stateOf(filter, tag.id)} onClick={() => cycleTag(tag.id)} />
+              <TagChip
+                key={tag.id}
+                name={tag.name}
+                state={stateOf(filter, tag.id)}
+                onToggleIncluded={() => toggleTagIncluded(tag.id)}
+                onToggleExcluded={() => toggleTagExcluded(tag.id)}
+              />
             ))}
           </div>
 
@@ -80,11 +90,6 @@ export function TagFilterSidebar() {
               Match all
             </button>
           </div>
-          <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Click a tag to include it (highlighted), click again to exclude it (red). "Match
-            any/all" decides how included tags combine — it only changes anything once you've
-            included more than one.
-          </p>
         </>
       ) : (
         <p className="text-xs text-muted-foreground">No tags yet — add one from Manage tags.</p>
@@ -123,6 +128,6 @@ export function TagFilterSidebar() {
       </div>
 
       <TagManagerDialog ref={managerRef} />
-    </aside>
+    </div>
   )
 }

@@ -1,9 +1,13 @@
+# Local development/verification: builds the image from this checkout.
+#
+# For the NAS (or anywhere else running a *published* image rather than
+# building one), use deploy/synology/docker-compose.yml instead — it pulls
+# from ghcr.io and never needs a build toolchain on the host.
 services:
   habitica-frontend:
     build:
       context: .
-      args:
-        VITE_HABITICA_CLIENT_ID: ${VITE_HABITICA_CLIENT_ID:?set VITE_HABITICA_CLIENT_ID in .env — see .env.example}
+    image: habitica-frontend:local
     ports:
       - "${HOST_PORT:-8080}:80"
     restart: unless-stopped

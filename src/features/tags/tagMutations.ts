@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { habiticaClient } from '@/lib/habitica/client'
+import { usePomodoroStore } from '@/features/pomodoro/pomodoroStore'
 import type { Tag, Task } from '@/lib/habitica/types'
 import { useTagFilterStore } from './tagFilterStore'
 
@@ -45,6 +46,10 @@ export function useDeleteTag() {
         old?.map((task) => (task.tags.includes(tagId) ? { ...task, tags: task.tags.filter((t) => t !== tagId) } : task)),
       )
       useTagFilterStore.getState().pruneTag(tagId)
+      // Same cascade for the pomodoro tracked-category set. Past session
+      // records keep their tag *snapshots* untouched — category stats are a
+      // live intersection with the tracked set, so no history cleanup.
+      usePomodoroStore.getState().pruneTrackedTag(tagId)
 
       return { previousTags, previousTasks }
     },

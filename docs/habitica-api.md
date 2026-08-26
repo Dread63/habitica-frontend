@@ -52,7 +52,7 @@ Every authenticated request needs **three** headers:
 |---|---|---|
 | `x-api-user` | the user's Habitica User ID | from `habitica.com/user/settings/api` |
 | `x-api-key` | the user's API Token | same page. This is a bearer credential — treat it like a password. |
-| `x-client` | `<your-habitica-user-id>-<appname>` | **Mandatory as of mid-2025 — requests without it are rejected outright.** This is *your* (the developer's) Habitica User ID plus a name for this app, e.g. `4c079...-habitica-modern-frontend`. It's not auto-generated; bake it in once via `VITE_HABITICA_CLIENT_ID`. |
+| `x-client` | `<your-habitica-user-id>-<appname>` | **Mandatory as of mid-2025 — requests without it are rejected outright.** This is *your* (the developer's) Habitica User ID plus a name for this app, e.g. `4c079...-habitica-modern-frontend`. It's not auto-generated. This app **derives it** as `${userId}-habitica-modern-frontend` from the same user id it already sends as `x-api-user` (see `lib/habitica/client.ts`) rather than taking it from build-time config — the value is identical, and it keeps the built bundle free of any per-account setup. |
 
 **CORS — confirmed open, verified directly against the live API (not assumed):**
 
@@ -276,6 +276,25 @@ participation — user-created tags are just `{id, name}`.
    expecting the response to contain a task object.
 8. **`tagId` on `POST /tasks/:taskId/tags/:tagId` must already exist in `user.tags`** — the server
    validates it's a UUID *and* that it's in the user's own tag list, not just any UUID.
+9. **Never send a bare `"YYYY-MM-DD"` string for a todo's `date` — Habitica parses it as literal
+   UTC midnight, not local midnight, and its own frontend then displays it a day early for anyone
+   west of UTC.** `date` is a plain Mongoose `Date` (`docs/vendor/task.model.js`); a bare date-only
+   string (what a native `<input type="date">` naturally produces) gets cast via `new
+   Date("YYYY-MM-DD")`, and per the ECMAScript spec that's parsed as **UTC midnight** — so a todo
+   "due 2026-08-18" would be stored as exactly `2026-08-18T00:00:00.000Z`, regardless of whose
+   timezone set it. habitica.com's own frontend reads a due date back with plain local `Date`
+   methods (like any ordinary date picker's round trip), so a UTC-midnight instant displays as the
+   *previous* local day for anyone west of UTC. **Confirmed as a real bug this app actually shipped
+   once**: a task created via this app's quick-add showed the wrong due date on habitica.com
+   itself, not just in this app — proof the bug was in what got sent, not how it was read back.
+   Fix: send a real UTC instant for *local* midnight of the intended day instead —
+   `date.toISOString()` on a local-midnight `Date`, exactly what a normal JS date picker produces.
+   See `src/lib/dateOnly.ts`'s `toApiDateTime` (used by `DatePicker.tsx`, `quickAdd.ts`'s `@date`
+   tokens, and `TodoBoard.tsx`'s drag-and-drop) and `src/features/tasks/taskDueDate.ts`'s
+   `getDueDate`, which reads the result back with a plain `new Date(...)` — no special handling
+   needed once the write side is correct. A daily's `nextDue[]` was never affected by any of this
+   — it's computed server-side already timezone-aware (from `user.preferences.timezoneOffset`, see
+   `website/common/script/cron.js` in the Habitica repo).
 
 ---
 
