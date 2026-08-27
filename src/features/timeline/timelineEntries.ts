@@ -1,3 +1,4 @@
+import { randomId } from '@/lib/randomId'
 import { parseDateOnlyString } from '@/lib/dateOnly'
 import { MINUTES_PER_DAY } from '@/lib/timeOfDay'
 import type { Task, TaskType } from '@/lib/habitica/types'
@@ -124,7 +125,7 @@ export function createTimelineEntry(
     durationMinutes: number
     taskSnapshot?: TimelineTaskSnapshot
   },
-  id: string = crypto.randomUUID(),
+  id: string = randomId(),
   createdAt: string = new Date().toISOString(),
   updatedAt: number = Date.now(),
 ): TimelineEntry {

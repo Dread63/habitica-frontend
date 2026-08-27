@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { randomId } from '@/lib/randomId'
 import { toDateOnlyString } from '@/lib/dateOnly'
 import type { TaskType } from '@/lib/habitica/types'
 import { minutesFromDate } from '@/lib/timeOfDay'
@@ -206,7 +207,7 @@ export const usePomodoroStore = create<PomodoroStore>()(
       startSession: (task) => {
         if (get().run.status !== 'idle') return // one clock; stop the current session first
         const now = new Date()
-        const phaseId = crypto.randomUUID()
+        const phaseId = randomId()
         set({
           run: {
             ...IDLE_RUN_STATE,
@@ -254,7 +255,7 @@ export const usePomodoroStore = create<PomodoroStore>()(
             ...state.run,
             status: 'running',
             segments: [],
-            phaseId: crypto.randomUUID(),
+            phaseId: randomId(),
             runningStartedAt: now.toISOString(),
           },
         }))

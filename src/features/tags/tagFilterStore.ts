@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { randomId } from '@/lib/randomId'
 import {
   EMPTY_TAG_FILTER,
   removeTagFromFilter,
@@ -66,7 +67,7 @@ export const useTagFilterStore = create<TagFilterStore>()(
         })),
 
       savePreset: (name) => {
-        const preset: TagFilterPreset = { id: crypto.randomUUID(), name, filter: get().filter }
+        const preset: TagFilterPreset = { id: randomId(), name, filter: get().filter }
         set((state) => ({ presets: [...state.presets, preset] }))
       },
 

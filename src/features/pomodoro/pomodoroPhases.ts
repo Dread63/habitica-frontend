@@ -1,3 +1,4 @@
+import { randomId } from '@/lib/randomId'
 import { segmentsMs, type FocusSegment, type PomodoroPhase } from './pomodoroEngine'
 
 /**
@@ -47,7 +48,7 @@ export function phaseActualMs(record: PomodoroPhaseRecord): number {
 
 export function createPhaseRecord(
   params: Omit<PomodoroPhaseRecord, 'id'>,
-  id: string = crypto.randomUUID(),
+  id: string = randomId(),
 ): PomodoroPhaseRecord {
   return { id, ...params }
 }

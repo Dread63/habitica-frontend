@@ -1,3 +1,4 @@
+import { randomId } from '@/lib/randomId'
 import { addDays, parseDateOnlyString, toDateOnlyString } from '@/lib/dateOnly'
 import type { Task, TaskType } from '@/lib/habitica/types'
 
@@ -176,7 +177,7 @@ export function startTracking(
     phaseId?: string
   },
   now: Date,
-  id: string = crypto.randomUUID(),
+  id: string = randomId(),
 ): TimeEntryState {
   const open = openEntryOf(state.entries)
   if (open && open.taskId === params.task.id && open.phaseId === params.phaseId) return state
@@ -302,7 +303,7 @@ export function splitEntry(
   entryId: string,
   at: Date,
   now: Date,
-  newId: string = crypto.randomUUID(),
+  newId: string = randomId(),
 ): TimeEntryState {
   const entry = state.entries.find((e) => e.id === entryId)
   if (!entry) return state
