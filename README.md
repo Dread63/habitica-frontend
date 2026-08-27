@@ -25,13 +25,20 @@ process: the container's own `HEALTHCHECK` targeted `http://localhost/healthz`, 
 `::1` before nginx's IPv4-only `listen 80` inside the container — every healthcheck probe failed
 with "connection refused" even though the app worked fine externally. Fixed to target `127.0.0.1`
 directly. Remaining Phase 6 scope (multi-arch build, versioned tags, a registry to publish to) is
-a packaging decision, not a correctness gap — see `CLAUDE.md`. Phase 5 (RPG/social-features
-milestone) is optional, separately scoped work; see `CLAUDE.md`'s roadmap section before starting
-it.
+a packaging decision, not a correctness gap — see `docs/architecture.md`. Phase 5 (RPG/social-features
+milestone) is optional, separately scoped work; see `docs/architecture.md` § What's left before
+starting it.
 
 ## Docs
 
-- `CLAUDE.md` — project context, architecture decisions, conventions (start here)
+- `CLAUDE.md` — the standing brief for coding agents: non-negotiables + a routing table
+  pointing at the doc that covers whatever you're touching (start here)
+- `docs/gotchas.md` — **every trap, indexed by area.** Each entry is a bug already paid for
+- `docs/architecture.md` — decided calls and why; what's left to build
+- `docs/time-tracking.md` — the three-records model (plan / ledger / phase log)
+- `docs/conventions.md` — code, test and verification discipline
+- `docs/history/` — chronological archive of every build round (archaeology; read `gotchas.md`
+  instead unless you need to know *why*)
 - `docs/implementation-plan.md` — full design: architecture, tech stack, tag-filter engine, phases
 - `docs/habitica-api.md` — curated Habitica API v3 reference for this project
 - `docs/api-examples/` — real example API payloads + a script to capture your own
