@@ -3,7 +3,7 @@ import { assignLanes } from './timelineLanes'
 import type { TimelineEntry } from './timelineEntries'
 
 function e(id: string, startMinutes: number, durationMinutes: number): TimelineEntry {
-  return { id, taskId: `task-${id}`, date: '2026-08-25', startMinutes, durationMinutes, createdAt: id }
+  return { id, taskId: `task-${id}`, date: '2026-08-25', startMinutes, durationMinutes, createdAt: id, updatedAt: 0 }
 }
 
 function laneOf(result: ReturnType<typeof assignLanes>, id: string): number {

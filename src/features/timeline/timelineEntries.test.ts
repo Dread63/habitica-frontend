@@ -28,6 +28,7 @@ function entry(overrides: Partial<TimelineEntry> = {}): TimelineEntry {
     startMinutes: 540,
     durationMinutes: 30,
     createdAt: '2026-08-25T09:00:00.000Z',
+    updatedAt: 0,
     ...overrides,
   }
 }
@@ -38,6 +39,7 @@ describe('createTimelineEntry', () => {
       { taskId: 't1', date: '2026-08-25', startMinutes: 540, durationMinutes: 30 },
       'fixed-id',
       '2026-08-25T00:00:00.000Z',
+      1234,
     )
     expect(a).toEqual({
       id: 'fixed-id',
@@ -46,6 +48,8 @@ describe('createTimelineEntry', () => {
       startMinutes: 540,
       durationMinutes: 30,
       createdAt: '2026-08-25T00:00:00.000Z',
+      updatedAt: 1234,
+      taskSnapshot: undefined,
     })
   })
 

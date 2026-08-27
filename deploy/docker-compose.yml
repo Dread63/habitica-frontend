@@ -1,0 +1,40 @@
+# Runs published images — nothing is compiled on the host. Paste into
+# Portainer (Stacks → Add stack → Web editor), Synology Container Manager
+# (Project → Create), or `docker compose up -d` on any box.
+#
+# Two services:
+#   web  — nginx serving the app, and proxying /api/ to the one below
+#   api  — sync + export service, owns the SQLite file on the volume
+#
+# Full walkthrough, including how to update: docs/deploy-synology.md
+services:
+  web:
+    # Must be lowercase — ghcr.io rejects uppercase in image paths even though
+    # the GitHub owner name is capitalised.
+    image: ghcr.io/dread63/habitica-frontend:latest
+    container_name: habitica-frontend
+    ports:
+      # host:container. Change the left number only — 80 is the port nginx
+      # listens on inside the container. On a Synology, DSM itself holds
+      # 5000/5001 and Web Station may hold 80/443; Portainer usually sits on
+      # 9000 or 9443.
+      - "8080:80"
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  api:
+    image: ghcr.io/dread63/habitica-frontend-api:latest
+    container_name: habitica-frontend-api
+    volumes:
+      # THE ONLY THING ON THIS STACK THAT HOLDS DATA. Everything else is
+      # disposable; this is your timeline and your entire focus history.
+      # Point a Hyper Backup task at this path.
+      - ./data:/data
+    restart: unless-stopped
+    # Deliberately NOT published to the host: the browser reaches it through
+    # the web container's /api/ proxy, so it never needs a port of its own.
+    # It has no authentication beyond a user-id header (see the trust model in
+    # api/src/server.js), so keeping it off the host network matters.
+    expose:
+      - "8081"

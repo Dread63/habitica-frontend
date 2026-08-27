@@ -28,3 +28,4 @@ docs/api-examples/live/
 *.njsproj
 *.sln
 *.sw?
+.local-data/

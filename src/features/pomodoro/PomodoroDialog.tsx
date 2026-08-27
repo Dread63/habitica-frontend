@@ -5,13 +5,15 @@ import { cn } from '@/lib/utils'
 import { PomodoroPanel } from './PomodoroPanel'
 import { PomodoroSettingsPanel } from './PomodoroSettingsPanel'
 import { PomodoroStatsPanel } from './PomodoroStatsPanel'
+import { PomodoroDataPanel } from './PomodoroDataPanel'
 
-type PomodoroTab = 'timer' | 'settings' | 'stats'
+type PomodoroTab = 'timer' | 'settings' | 'stats' | 'data'
 
 const TABS: { id: PomodoroTab; label: string }[] = [
   { id: 'timer', label: 'Timer' },
   { id: 'settings', label: 'Settings' },
   { id: 'stats', label: 'Stats' },
+  { id: 'data', label: 'Data' },
 ]
 
 /**
@@ -48,6 +50,7 @@ export const PomodoroDialog = React.forwardRef<DialogHandle>((_, ref) => {
         {tab === 'timer' && <PomodoroPanel />}
         {tab === 'settings' && <PomodoroSettingsPanel />}
         {tab === 'stats' && <PomodoroStatsPanel />}
+        {tab === 'data' && <PomodoroDataPanel />}
       </div>
     </Dialog>
   )

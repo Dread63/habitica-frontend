@@ -1,13 +1,27 @@
-# Local development/verification: builds the image from this checkout.
+# Local development/verification: builds both images from this checkout.
 #
-# For the NAS (or anywhere else running a *published* image rather than
-# building one), use deploy/synology/docker-compose.yml instead — it pulls
-# from ghcr.io and never needs a build toolchain on the host.
+# For the NAS (or anywhere else running *published* images rather than
+# building them), use deploy/docker-compose.yml instead — it pulls from
+# ghcr.io and never needs a build toolchain on the host.
 services:
-  habitica-frontend:
+  web:
     build:
       context: .
     image: habitica-frontend:local
     ports:
       - "${HOST_PORT:-8080}:80"
     restart: unless-stopped
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: ./api
+    image: habitica-frontend-api:local
+    volumes:
+      # Local scratch data. deploy/docker-compose.yml uses ./data next to the
+      # compose file instead — that's the path to back up on the NAS.
+      - ./.local-data:/data
+    restart: unless-stopped
+    expose:
+      - "8081"

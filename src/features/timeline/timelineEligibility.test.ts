@@ -15,6 +15,7 @@ const entry = (taskId: string, date: string): TimelineEntry => ({
   startMinutes: 540,
   durationMinutes: 30,
   createdAt: '',
+      updatedAt: 0,
 })
 
 describe('eligibleTasks', () => {

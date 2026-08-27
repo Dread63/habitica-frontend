@@ -22,6 +22,14 @@ interface PomodoroStoreState {
   settings: PomodoroSettings
   run: PomodoroRunState
   history: PomodoroSessionRecord[]
+  /**
+   * ms epoch of the last settings change — the conflict rule when two
+   * devices both edited them (see lib/sync/mergeState.ts). Only `settings`
+   * and `history` sync; `run` is deliberately device-local, because a live
+   * countdown belongs to the machine you started it on and syncing it would
+   * mean two devices fighting over one clock.
+   */
+  settingsUpdatedAt: number
 }
 
 interface PomodoroStore extends PomodoroStoreState {
@@ -64,6 +72,12 @@ interface PomodoroStore extends PomodoroStoreState {
    * matching this codebase's convention of effects living in components.
    */
   advance: () => CompletedPhase | null
+  /** Replace the synced half of the store from a server merge (lib/sync). */
+  applySyncedState: (state: {
+    history: PomodoroSessionRecord[]
+    settings: PomodoroSettings
+    settingsUpdatedAt: number
+  }) => void
 }
 
 /** < 1 min of focus isn't a session worth logging. */
@@ -122,8 +136,10 @@ export const usePomodoroStore = create<PomodoroStore>()(
       settings: defaultPomodoroSettings(),
       run: IDLE_RUN_STATE,
       history: [],
+      settingsUpdatedAt: 0,
 
-      updateSettings: (patch) => set((state) => ({ settings: { ...state.settings, ...patch } })),
+      updateSettings: (patch) =>
+        set((state) => ({ settings: { ...state.settings, ...patch }, settingsUpdatedAt: Date.now() })),
 
       toggleTrackedTag: (tagId) =>
         set((state) => ({
@@ -133,12 +149,17 @@ export const usePomodoroStore = create<PomodoroStore>()(
               ? state.settings.trackedTagIds.filter((t) => t !== tagId)
               : [...state.settings.trackedTagIds, tagId],
           },
+          settingsUpdatedAt: Date.now(),
         })),
 
       pruneTrackedTag: (tagId) =>
         set((state) => ({
           settings: { ...state.settings, trackedTagIds: state.settings.trackedTagIds.filter((t) => t !== tagId) },
+          settingsUpdatedAt: Date.now(),
         })),
+
+      applySyncedState: ({ history, settings, settingsUpdatedAt }) =>
+        set({ history, settings, settingsUpdatedAt }),
 
       startSession: (tasks, pinned = false) => {
         if (get().run.status !== 'idle') return // one clock; stop the current session first
@@ -232,18 +253,22 @@ export const usePomodoroStore = create<PomodoroStore>()(
     }),
     {
       name: 'habitica-frontend:pomodoro',
-      version: 4,
+      version: 5,
       partialize: (state): PomodoroStoreState => ({
         settings: state.settings,
         run: state.run,
         history: state.history,
+        settingsUpdatedAt: state.settingsUpdatedAt,
       }),
       /**
        * v1 linked at most one task (taskId + snapshots); v2 links a list; v3
        * adds per-task `attribution` to records, replaces the run's
        * `elapsedMsBeforeStart` scalar with real `segments`, and adds the
        * sound/notification settings that manual phase advance needs; v4 adds
-       * `run.tasksPinned` (history untouched — the run resets anyway).
+       * `run.tasksPinned` (history untouched — the run resets anyway); v5
+       * adds `settingsUpdatedAt` for cross-device settings conflicts, seeded
+       * to 0 so a device that has actually synced always wins over a local
+       * copy that never has.
        *
        * History migrates without losing anything, but note what it can't
        * reconstruct: pre-v3 records only know *which* tasks a session was
@@ -263,6 +288,7 @@ export const usePomodoroStore = create<PomodoroStore>()(
       migrate: (persisted) => {
         const p = persisted as {
           settings?: Partial<PomodoroSettings>
+          settingsUpdatedAt?: number
           run?: unknown
           history?: (Partial<PomodoroSessionRecord> & {
             taskId?: string | null
@@ -273,6 +299,7 @@ export const usePomodoroStore = create<PomodoroStore>()(
         const defaults = defaultPomodoroSettings()
         return {
           settings: { ...defaults, ...p.settings },
+          settingsUpdatedAt: typeof p.settingsUpdatedAt === 'number' ? p.settingsUpdatedAt : 0,
           run: IDLE_RUN_STATE,
           history: (p.history ?? []).map((r) => {
             const tasks: PomodoroTaskRef[] = Array.isArray(r.tasks)

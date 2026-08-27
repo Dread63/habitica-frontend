@@ -163,6 +163,7 @@ describe('attributeFocusTime', () => {
       startMinutes: hhmmToMinutes('09:00')!,
       durationMinutes: 20,
       createdAt: '2026-08-25T00:00:00.000Z',
+      updatedAt: 0,
     }
     const result = attributeFocusTime({ segments: [segment('09:00', '09:20')], entries: [bare], linkedTasks: [] })
     expect(result).toEqual([{ taskId: 'ghost', text: 'Unknown task', tagIds: [], minutes: 20 }])

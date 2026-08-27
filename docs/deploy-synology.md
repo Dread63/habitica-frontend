@@ -1,22 +1,34 @@
 # Deploying to a Synology NAS
 
-The shape of this setup: **GitHub Actions builds the image, GHCR stores it, the NAS only ever
+The shape of this setup: **GitHub Actions builds the images, GHCR stores them, the NAS only ever
 pulls.** Nothing is compiled on the NAS — no Node, no npm, no build toolchain — so a low-RAM
 model is fine and an update is a pull plus a restart.
 
 ```
-git push  ─►  GitHub Actions  ─►  ghcr.io/dread63/habitica-frontend:latest  ─►  NAS pulls
-              (verify + build)         (multi-arch: amd64 + arm64)              (Container Manager)
+git push  ─►  GitHub Actions  ─►  ghcr.io/dread63/habitica-frontend      ─►  NAS pulls
+              (verify + build)     ghcr.io/dread63/habitica-frontend-api      (Portainer or
+                                   (multi-arch: amd64 + arm64)                 Container Manager)
 ```
 
-Two properties make this work, both of which the app was changed to have:
+**The stack is two containers plus one folder:**
+
+| | what it does | holds data? |
+|---|---|---|
+| `web` | nginx serving the app; proxies `/api/` to the service below | no — fully disposable |
+| `api` | sync + export service, owns one SQLite file | **yes — via a volume** |
+| `./data` | the volume: your timeline and your entire focus history | **back this up** |
+
+Three properties make this work:
 
 - **No build-time configuration.** Habitica's mandatory `x-client` header used to come from
   `VITE_HABITICA_CLIENT_ID`, baked in at build time, which made every image personal to one
   account. It's now derived from the user id you log in with, so one published image serves
   anyone and there's nothing to set on the NAS.
-- **No server-side secrets.** This is a static SPA that calls `habitica.com` directly from the
-  browser. Your API token lives in *your browser's* local storage and never touches the NAS.
+- **Your Habitica token still never touches the NAS.** The browser talks to `habitica.com`
+  directly for tasks; the NAS only ever sees timeline placements and focus history.
+- **The app still works with no server at all.** localStorage remains the working copy, so the
+  frontend container runs standalone, and an unreachable NAS degrades to "changes saved locally,
+  uploaded on reconnect" rather than an error screen.
 
 ---
 
@@ -117,8 +129,13 @@ served `no-cache` and hashed assets are immutable, so this shouldn't normally be
 it rules the browser out if something looks stale.
 
 Your data is unaffected by updates. Habitica tasks live on Habitica's servers; timeline
-placements, pomodoro history, tag filters and theme live in your browser's local storage. The
-container itself is stateless — nothing is lost by destroying and recreating it.
+placements and focus history live in `./data` on the NAS; UI preferences (theme, density, rail
+collapse) stay in the browser. Both containers are stateless — nothing is lost by destroying and
+recreating them, as long as the volume stays put.
+
+> **One thing to be careful with:** `docker compose down -v` (or Portainer's "delete volumes"
+> checkbox) removes volumes. On a bind mount like `./data` your files survive that, but don't
+> make a habit of relying on it.
 
 ### Watching a release land
 
@@ -163,18 +180,102 @@ moment, so a bad `:latest` reaches the NAS on its own.
 
 ---
 
+## Your data: where it lives, and getting it out
+
+Everything the app records about your time is in one SQLite file:
+
+```
+<project folder>/data/focus.sqlite      (+ -wal and -shm alongside it)
+```
+
+Two tables matter. `timeline_entries` holds your placements and is mutable. `focus_sessions` is
+the audit trail and is **append-only by construction** — the server has no UPDATE path for it at
+all, so a recorded session can't later be quietly restated. That's what makes the log worth
+something as evidence rather than just as data.
+
+### Backing it up
+
+Point **Hyper Backup** at the project folder. It's a handful of files and it compresses well.
+
+For a portable copy that doesn't depend on SQLite, on Docker, or on this app continuing to
+exist, use the exports below — that's what they're for.
+
+### Exporting
+
+In the app: the pomodoro timer → **Data** tab → **Download CSV** / **Download JSON backup**.
+Or hit the endpoints directly, which is handy for a scheduled backup:
+
+```sh
+curl -H "X-Habitica-User-Id: <your-user-id>" \
+     "http://<nas-ip>:8080/api/export.csv" -o focus-log.csv
+
+# a bounded range, for a review period
+curl -H "X-Habitica-User-Id: <your-user-id>" \
+     "http://<nas-ip>:8080/api/export.csv?from=2026-01-01&to=2026-03-31" -o q1.csv
+```
+
+**The CSV is one row per task per session**, not per session:
+
+| date | weekday | start_local | end_local | minutes | task | categories | completed_full_session |
+|---|---|---|---|---|---|---|---|
+| 2026-08-27 | Thursday | 09:00 | 09:25 | 10.00 | Ship sync | Work | yes |
+| 2026-08-27 | Thursday | 09:00 | 09:25 | 15.00 | Write docs | School | yes |
+
+That shape is the point: a 25-minute block split across two tasks becomes two rows of 10 and 15,
+so summing `minutes` by `categories` or by `task` in a pivot gives real totals instead of
+counting the block twice. Tag ids are resolved to names, and times are rendered in your local
+zone alongside the UTC instants, so the file stands on its own.
+
+The JSON export is the complete server-side state in the shapes the app understands — the one to
+keep if you ever rebuild the NAS.
+
+---
+
+## Security
+
+The api service takes the `X-Habitica-User-Id` header at face value. It never sees your API
+token and never contacts Habitica, but it also **does not verify that you are who the header
+says**. Anyone who can reach that service and knows a user id can read and write that user's
+focus data.
+
+That was a deliberate trade — it keeps your token in the browser where it started — and it's
+fine on a home LAN. Two consequences worth respecting:
+
+- The compose file gives the api service `expose:` rather than `ports:`, so it is reachable only
+  from the web container, not from your network directly. Leave it that way.
+- **Don't port-forward this to the internet.** If you ever want off-LAN access, put it behind a
+  VPN (Synology has WireGuard/OpenVPN packages) or a reverse proxy that does its own
+  authentication. Adding real auth to the service is a change worth making first.
+
+---
+
 ## Verification record
 
 Run against a real Docker daemon (29.7.2) from this checkout, not inspected:
 
-- `docker build` completes; final image **74.8 MB**
-- `/healthz` returns `ok`, and the container reports **healthy** on its first probe
-- a client-routed path (`/timeline`) returns `200 text/html` — the SPA fallback works
+- `docker compose build` completes for both images; the web image is **74.8 MB**
+- both containers report **healthy**
+- `/` and a client-routed path (`/timeline`) both return `200 text/html` — SPA fallback works
 - `index.html` serves `Cache-Control: no-cache`; hashed assets serve
   `public, max-age=31536000, immutable`
+- `/api/health` answers **through the nginx proxy**, same-origin
+- a push from one "device" is visible to a second one that had nothing — the actual cross-device
+  claim, tested rather than assumed
+- the CSV export splits a 25-minute session into 10 + 15 minute rows with tag ids resolved to
+  names and times in the requested zone
+- data survives `docker compose restart api` — it's on the volume, not in the container
+- **with the api container stopped, the frontend still serves `200`** and `/api/` returns 502,
+  which the client treats as "offline, saved locally". Running the web container alone remains
+  supported
 - `docker buildx build --platform linux/amd64,linux/arm64` succeeds, and the Node build runs
   **once**, natively — only the small nginx layers are built per architecture (see the
   `--platform=$BUILDPLATFORM` comment in the Dockerfile)
+
+A real bug this run caught, worth recording because inspection would never have found it: with
+`USER node` in the api Dockerfile and a bind-mounted `./data`, the container crash-looped on
+`unable to open database file`. The host directory arrives owned by root when Docker auto-creates
+it, and a build-time `chown` is invisible because the bind mount is layered over the image at run
+time. Fixed with an entrypoint that fixes ownership and then drops privileges via `su-exec`.
 
 **Not verified:** logging in against a real Habitica account from inside the container. That
 exercises `src/lib/habitica/client.ts` against the live API rather than anything

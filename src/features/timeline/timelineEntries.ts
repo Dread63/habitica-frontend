@@ -74,6 +74,15 @@ export interface TimelineEntry {
   durationMinutes: number
   /** ISO instant — stable sort tie-break only, never sent anywhere. */
   createdAt: string
+  /**
+   * ms epoch of the last change to this entry. This is the sync layer's
+   * conflict rule: when the same placement was edited on two devices, the
+   * higher `updatedAt` wins (see lib/sync/mergeState.ts and the server's
+   * matching `WHERE updated_at <= excluded.updated_at`). Stamped by the
+   * store on every write rather than by the pure helpers below, so there is
+   * exactly one place that can forget to set it.
+   */
+  updatedAt: number
   /** Undefined only for entries created before snapshots existed (v1). */
   taskSnapshot?: TimelineTaskSnapshot
 }
@@ -124,6 +133,7 @@ export function createTimelineEntry(
   },
   id: string = crypto.randomUUID(),
   createdAt: string = new Date().toISOString(),
+  updatedAt: number = Date.now(),
 ): TimelineEntry {
   const startMinutes = clampStartMinutes(params.startMinutes)
   return {
@@ -133,6 +143,7 @@ export function createTimelineEntry(
     startMinutes,
     durationMinutes: clampDuration(startMinutes, params.durationMinutes),
     createdAt,
+    updatedAt,
     taskSnapshot: params.taskSnapshot,
   }
 }

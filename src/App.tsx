@@ -6,6 +6,7 @@ import { Dashboard } from '@/features/tasks/Dashboard'
 import { TimelinePage } from '@/features/timeline/TimelinePage'
 import { PomodoroStatusPill } from '@/features/pomodoro/PomodoroStatusPill'
 import { useTimelineSnapshotSync } from '@/features/timeline/useTimelineSnapshotSync'
+import { useFocusSync } from '@/lib/sync/useFocusSync'
 import { ConfirmDialogHost } from '@/components/ui/ConfirmDialogHost'
 import { PromptDialogHost } from '@/components/ui/PromptDialogHost'
 import { cn } from '@/lib/utils'
@@ -20,6 +21,9 @@ import { cn } from '@/lib/utils'
  * check without putting a conditional hook call in AppNav. */
 function TimelineSnapshotSync() {
   useTimelineSnapshotSync()
+  // Mirrors timeline placements and focus history to the NAS when a sync
+  // service is deployed; a no-op (after one probe) when it isn't.
+  useFocusSync()
   return null
 }
 
