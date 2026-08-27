@@ -2,11 +2,13 @@ import { createServer } from 'node:http'
 import {
   applySync,
   openDatabase,
-  readSessions,
+  readPhases,
   readSettings,
+  readTimeEntries,
+  readTimeEntriesInRange,
   readTimelineEntries,
 } from './store.js'
-import { buildJsonExport, sessionsToCsv } from './export.js'
+import { buildJsonExport, entriesToCsv } from './export.js'
 
 /**
  * The sync + export service. Plain node:http and node:sqlite — no framework,
@@ -71,7 +73,8 @@ function readBody(req) {
 function snapshot(userId) {
   return {
     timelineEntries: readTimelineEntries(db, userId),
-    sessions: readSessions(db, userId),
+    timeEntries: readTimeEntries(db, userId),
+    phases: readPhases(db, userId),
     settings: readSettings(db, userId),
     serverTime: new Date().toISOString(),
   }
@@ -126,7 +129,8 @@ async function handle(req, res) {
       buildJsonExport({
         userId,
         timelineEntries: readTimelineEntries(db, userId),
-        sessions: readSessions(db, userId),
+        timeEntries: readTimeEntries(db, userId),
+        phases: readPhases(db, userId),
         settings: readSettings(db, userId),
       }),
       contentDisposition(`focus-backup-${stamp}.json`),
@@ -134,7 +138,7 @@ async function handle(req, res) {
   }
 
   if (path === '/api/export.csv') {
-    const sessions = readSessions(db, userId, {
+    const entries = readTimeEntriesInRange(db, userId, {
       from: url.searchParams.get('from') ?? undefined,
       to: url.searchParams.get('to') ?? undefined,
     })
@@ -142,9 +146,10 @@ async function handle(req, res) {
     // payload, because only the browser knows them — the server never talks
     // to Habitica and has no locale of its own worth trusting.
     const settings = readSettings(db, userId)
-    const csv = sessionsToCsv(sessions, {
+    const csv = entriesToCsv(entries, {
       tagNames: settings?.payload?.tagNames ?? {},
       timeZone: url.searchParams.get('tz') ?? settings?.payload?.timeZone ?? 'UTC',
+      phases: readPhases(db, userId),
     })
     const stamp = new Date().toISOString().slice(0, 10)
     return send(res, 200, csv, {

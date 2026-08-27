@@ -6,6 +6,7 @@ import { Dashboard } from '@/features/tasks/Dashboard'
 import { TimelinePage } from '@/features/timeline/TimelinePage'
 import { PomodoroStatusPill } from '@/features/pomodoro/PomodoroStatusPill'
 import { useTimelineSnapshotSync } from '@/features/timeline/useTimelineSnapshotSync'
+import { TrackingReconciliationHost } from '@/features/tracking/TrackingReconciliationHost'
 import { useFocusSync } from '@/lib/sync/useFocusSync'
 import { ConfirmDialogHost } from '@/components/ui/ConfirmDialogHost'
 import { PromptDialogHost } from '@/components/ui/PromptDialogHost'
@@ -80,6 +81,9 @@ export function App() {
           promptStore.ts, the app's replacement for window.confirm/prompt. */}
       <ConfirmDialogHost />
       <PromptDialogHost />
+      {/* Owns the heartbeat and the idle prompt. Mounted exactly once —
+          PomodoroPanel is mounted twice and StrictMode doubles effects. */}
+      <TrackingReconciliationHost />
     </>
   )
 }

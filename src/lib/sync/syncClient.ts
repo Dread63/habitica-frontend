@@ -1,5 +1,5 @@
 import type { PomodoroSettings } from '@/features/pomodoro/pomodoroEngine'
-import type { RemoteSession, RemoteSettings, RemoteTimelineEntry } from './mergeState'
+import type { RemotePomodoroPhase, RemoteSettings, RemoteTimeEntry, RemoteTimelineEntry } from './mergeState'
 
 /**
  * HTTP client for the focus-sync service.
@@ -24,14 +24,16 @@ export interface SyncedSettingsPayload extends PomodoroSettings {
 
 export interface SyncResponse {
   timelineEntries: RemoteTimelineEntry[]
-  sessions: RemoteSession[]
+  timeEntries: RemoteTimeEntry[]
+  phases: RemotePomodoroPhase[]
   settings: RemoteSettings<SyncedSettingsPayload> | null
   serverTime: string
 }
 
 export interface SyncPushBody {
   timelineEntries: RemoteTimelineEntry[]
-  sessions: RemoteSession[]
+  timeEntries: RemoteTimeEntry[]
+  phases: RemotePomodoroPhase[]
   settings: RemoteSettings<SyncedSettingsPayload> | null
 }
 

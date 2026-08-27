@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   applySync,
   openDatabase,
-  insertSession,
-  readSessions,
+  insertPhase,
+  readPhases,
   readSettings,
+  readTimeEntries,
+  readTimeEntriesInRange,
   readTimelineEntries,
   upsertSettings,
+  upsertTimeEntry,
   upsertTimelineEntry,
 } from './store.js'
 
@@ -73,33 +76,76 @@ describe('timeline entries — last write wins', () => {
   })
 })
 
-describe('focus sessions — append only', () => {
-  const session = (id, startedAt, minutes) => ({
+const timeEntry = (id, updatedAt, extra = {}) => ({
+  id,
+  updatedAt,
+  startedAt: '2026-08-27T09:00:00.000Z',
+  payload: { id, startedAt: '2026-08-27T09:00:00.000Z', endedAt: '2026-08-27T09:25:00.000Z' },
+  ...extra,
+})
+
+describe('time entries — mutable, last write wins', () => {
+  it('an edited entry replaces the original', () => {
+    // The reason this table is NOT append-only: entries are correctable, and
+    // INSERT OR IGNORE would silently drop the correction.
+    upsertTimeEntry(db, USER, timeEntry('e1', 1000))
+    upsertTimeEntry(db, USER, {
+      id: 'e1',
+      updatedAt: 2000,
+      startedAt: '2026-08-27T09:00:00.000Z',
+      payload: { id: 'e1', endedAt: '2026-08-27T09:40:00.000Z' },
+    })
+    expect(readTimeEntries(db, USER)[0].payload.endedAt).toBe('2026-08-27T09:40:00.000Z')
+  })
+
+  it('an older write from a stale device is ignored', () => {
+    upsertTimeEntry(db, USER, timeEntry('e1', 2000))
+    upsertTimeEntry(db, USER, { id: 'e1', updatedAt: 1000, startedAt: 'x', payload: { id: 'e1', wrong: true } })
+    expect(readTimeEntries(db, USER)[0].payload.wrong).toBeUndefined()
+  })
+
+  it('deletes are tombstones that survive a stale push', () => {
+    upsertTimeEntry(db, USER, timeEntry('e1', 1000))
+    upsertTimeEntry(db, USER, { id: 'e1', updatedAt: 2000, deleted: true })
+    expect(readTimeEntries(db, USER)[0]).toMatchObject({ deleted: true, payload: null })
+
+    upsertTimeEntry(db, USER, timeEntry('e1', 1500))
+    expect(readTimeEntries(db, USER)[0].deleted).toBe(true)
+  })
+
+  it('range reads exclude tombstones and honour from/to', () => {
+    upsertTimeEntry(db, USER, { ...timeEntry('a', 1), startedAt: '2026-08-26T09:00:00.000Z' })
+    upsertTimeEntry(db, USER, { ...timeEntry('b', 1), startedAt: '2026-08-27T09:00:00.000Z' })
+    upsertTimeEntry(db, USER, { id: 'c', updatedAt: 1, deleted: true })
+    const scoped = readTimeEntriesInRange(db, USER, { from: '2026-08-27', to: '2026-08-27T23:59:59Z' })
+    expect(scoped.map((e) => e.id)).toEqual(['b'])
+  })
+
+  it('partitions data per user', () => {
+    upsertTimeEntry(db, USER, timeEntry('e1', 1000))
+    upsertTimeEntry(db, OTHER, timeEntry('e1', 1000))
+    expect(readTimeEntries(db, USER)).toHaveLength(1)
+    expect(readTimeEntries(db, OTHER)).toHaveLength(1)
+  })
+})
+
+describe('pomodoro phases — append only', () => {
+  const phase = (id, startedAt, plannedMs) => ({
     id,
     startedAt,
-    payload: { id, startedAt, durationMinutes: minutes },
+    payload: { id, startedAt, plannedMs },
   })
 
-  it('never overwrites an existing session', () => {
-    // The audit trail's core property: a recorded session is a fact about the
-    // past, so a later push claiming otherwise must not rewrite it.
-    insertSession(db, USER, session('s1', '2026-08-25T09:00:00.000Z', 25))
-    insertSession(db, USER, session('s1', '2026-08-25T09:00:00.000Z', 999))
-    expect(readSessions(db, USER)[0].payload.durationMinutes).toBe(25)
+  it('never overwrites an existing phase — the timer having run is a fact', () => {
+    insertPhase(db, USER, phase('p1', '2026-08-27T09:00:00.000Z', 1500000))
+    insertPhase(db, USER, phase('p1', '2026-08-27T09:00:00.000Z', 999))
+    expect(readPhases(db, USER)[0].payload.plannedMs).toBe(1500000)
   })
 
-  it('returns sessions in chronological order regardless of insert order', () => {
-    insertSession(db, USER, session('later', '2026-08-25T14:00:00.000Z', 25))
-    insertSession(db, USER, session('earlier', '2026-08-25T09:00:00.000Z', 25))
-    expect(readSessions(db, USER).map((s) => s.id)).toEqual(['earlier', 'later'])
-  })
-
-  it('filters by date range for scoped exports', () => {
-    insertSession(db, USER, session('a', '2026-08-24T09:00:00.000Z', 25))
-    insertSession(db, USER, session('b', '2026-08-25T09:00:00.000Z', 25))
-    insertSession(db, USER, session('c', '2026-08-26T09:00:00.000Z', 25))
-    const scoped = readSessions(db, USER, { from: '2026-08-25', to: '2026-08-25T23:59:59Z' })
-    expect(scoped.map((s) => s.id)).toEqual(['b'])
+  it('returns phases chronologically regardless of insert order', () => {
+    insertPhase(db, USER, phase('later', '2026-08-27T14:00:00.000Z', 1))
+    insertPhase(db, USER, phase('earlier', '2026-08-27T09:00:00.000Z', 1))
+    expect(readPhases(db, USER).map((p) => p.id)).toEqual(['earlier', 'later'])
   })
 })
 
@@ -118,15 +164,27 @@ describe('settings', () => {
 })
 
 describe('applySync', () => {
-  it('applies entries, sessions and settings together', () => {
+  it('applies placements, time entries, phases and settings together', () => {
     applySync(db, USER, {
       timelineEntries: [entry('e1', 1000), entry('e2', 1000)],
-      sessions: [{ id: 's1', startedAt: '2026-08-25T09:00:00.000Z', payload: { id: 's1' } }],
+      timeEntries: [timeEntry('t1', 1000)],
+      phases: [{ id: 'p1', startedAt: '2026-08-27T09:00:00.000Z', payload: { id: 'p1' } }],
       settings: { updatedAt: 1000, payload: { trackedTagIds: ['t1'] } },
     })
     expect(readTimelineEntries(db, USER)).toHaveLength(2)
-    expect(readSessions(db, USER)).toHaveLength(1)
+    expect(readTimeEntries(db, USER)).toHaveLength(1)
+    expect(readPhases(db, USER)).toHaveLength(1)
     expect(readSettings(db, USER).payload.trackedTagIds).toEqual(['t1'])
+  })
+
+  it('tolerates a legacy body containing a `sessions` key', () => {
+    // The rolling-deploy guard: the api can be updated before a browser
+    // reloads, and the stale bundle still pushes the old shape. Ignoring it
+    // is what keeps that from 500ing.
+    expect(() =>
+      applySync(db, USER, { sessions: [{ id: 'old', startedAt: 'x', payload: {} }], timeEntries: [timeEntry('n', 1)] }),
+    ).not.toThrow()
+    expect(readTimeEntries(db, USER).map((e) => e.id)).toEqual(['n'])
   })
 
   it('tolerates a push with nothing in it', () => {

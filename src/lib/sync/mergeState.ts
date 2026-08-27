@@ -1,5 +1,6 @@
 import type { TimelineEntry } from '@/features/timeline/timelineEntries'
-import type { PomodoroSessionRecord } from '@/features/pomodoro/pomodoroStats'
+import type { PomodoroPhaseRecord } from '@/features/pomodoro/pomodoroPhases'
+import type { TimeEntry, TimeEntryState } from '@/features/tracking/timeEntries'
 
 /**
  * Reconciling this device's copy with the server's.
@@ -17,9 +18,14 @@ import type { PomodoroSessionRecord } from '@/features/pomodoro/pomodoroStats'
  *    `updatedAt`, with deletions represented as tombstones. A tombstone
  *    competes on timestamp like any other write, which is what stops a device
  *    that was offline during a delete from resurrecting the block.
- *  - **Focus sessions** are immutable history, so they're a plain union by
- *    id. Nothing is ever overwritten — a session that happened is a fact, and
- *    the log's value as evidence depends on it staying one.
+ *  - **Time entries** are mutable — you can correct one you forgot to
+ *    switch — so they merge exactly like timeline placements: last-write-wins
+ *    with tombstones. `INSERT OR IGNORE` would silently drop a corrected end
+ *    time and leave two devices permanently divergent with no error anywhere.
+ *  - **Pomodoro phases** are immutable history, so they're a plain union by
+ *    id. Nothing is ever overwritten — the timer having run for 25 minutes is
+ *    a fact about a machine, and this is the record that earns append-only
+ *    storage (the old focus_sessions table claimed it without deserving it).
  *  - **Settings** are a single record, last-write-wins.
  *
  * Applying the merge locally as well as remotely also closes a small race:
@@ -34,10 +40,20 @@ export interface RemoteTimelineEntry {
   payload: TimelineEntry | null
 }
 
-export interface RemoteSession {
+export interface RemoteTimeEntry {
+  id: string
+  updatedAt: number
+  deleted: boolean
+  /** Denormalised so the server can range-scan exports without parsing the
+   * payload; null on a tombstone. */
+  startedAt: string | null
+  payload: TimeEntry | null
+}
+
+export interface RemotePomodoroPhase {
   id: string
   startedAt: string
-  payload: PomodoroSessionRecord
+  payload: PomodoroPhaseRecord
 }
 
 export interface RemoteSettings<T> {
@@ -50,15 +66,44 @@ export interface LocalTimelineState {
   tombstones: Record<string, number>
 }
 
+/** The minimum a record must carry to take part in versioned merging. */
+export interface Versioned {
+  id: string
+  updatedAt: number
+}
+
+export interface VersionedState<T extends Versioned> {
+  records: T[]
+  tombstones: Record<string, number>
+}
+
+export interface RemoteVersioned<T> {
+  id: string
+  updatedAt: number
+  deleted: boolean
+  payload: T | null
+}
+
 /**
- * Merge one id's worth of history. Whichever side has the newer timestamp
- * wins, and a tie resolves to *deleted* — deliberately: if a delete and an
- * edit land on the same millisecond, honouring the delete is recoverable
- * (re-create the block) while wrongly keeping it is not obviously wrong to
- * the user and silently diverges the two devices.
+ * Merge one id's worth of history, for any record type that carries an
+ * `updatedAt`. Whichever side has the newer timestamp wins, and a tie
+ * resolves to *deleted* — deliberately: if a delete and an edit land on the
+ * same millisecond, honouring the delete is recoverable (re-create the
+ * record) while wrongly keeping it is not obviously wrong to the user and
+ * silently diverges the two devices.
+ *
+ * This is generic rather than duplicated per record type on purpose. The
+ * tie-break above and the "a tombstone competes on timestamp like any other
+ * write" rule are the subtlest logic in the app, and a second copy would
+ * inevitably drift from this one. Callers supply only the final sort, which
+ * is the one thing that legitimately differs between record types.
  */
-export function mergeTimeline(local: LocalTimelineState, remote: RemoteTimelineEntry[]): LocalTimelineState {
-  const liveById = new Map(local.entries.map((e) => [e.id, e]))
+export function mergeVersioned<T extends Versioned>(
+  local: VersionedState<T>,
+  remote: RemoteVersioned<T>[],
+  compare: (a: T, b: T) => number,
+): VersionedState<T> {
+  const liveById = new Map(local.records.map((r) => [r.id, r]))
   const tombstones = { ...local.tombstones }
 
   for (const incoming of remote) {
@@ -80,23 +125,45 @@ export function mergeTimeline(local: LocalTimelineState, remote: RemoteTimelineE
     }
   }
 
-  return {
-    // createdAt keeps the original stable ordering convention (entriesForDate
-    // sorts by start time, then this) so a sync never reshuffles the day.
-    entries: [...liveById.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
-    tombstones,
-  }
+  return { records: [...liveById.values()].sort(compare), tombstones }
+}
+
+/**
+ * Timeline placements. Sorted by `createdAt` — the original stable ordering
+ * convention (entriesForDate sorts by start time, then this) so a sync never
+ * reshuffles the day.
+ */
+export function mergeTimeline(local: LocalTimelineState, remote: RemoteTimelineEntry[]): LocalTimelineState {
+  const merged = mergeVersioned<TimelineEntry>(
+    { records: local.entries, tombstones: local.tombstones },
+    remote,
+    (a, b) => a.createdAt.localeCompare(b.createdAt),
+  )
+  return { entries: merged.records, tombstones: merged.tombstones }
+}
+
+/**
+ * Time entries. Sorted by `startedAt` — the ledger reads chronologically,
+ * unlike timeline placements which keep creation order.
+ */
+export function mergeTimeEntries(local: TimeEntryState, remote: RemoteTimeEntry[]): TimeEntryState {
+  const merged = mergeVersioned<TimeEntry>(
+    { records: local.entries, tombstones: local.tombstones },
+    remote,
+    (a, b) => a.startedAt.localeCompare(b.startedAt),
+  )
+  return { entries: merged.records, tombstones: merged.tombstones }
 }
 
 /** Union by id, oldest first. Local wins a collision only because nothing
- * ever legitimately differs — ids are uuids and records are immutable. */
-export function mergeSessions(
-  local: PomodoroSessionRecord[],
-  remote: RemoteSession[],
-): PomodoroSessionRecord[] {
-  const byId = new Map<string, PomodoroSessionRecord>()
-  for (const session of remote) byId.set(session.id, session.payload)
-  for (const session of local) byId.set(session.id, session)
+ * ever legitimately differs — ids are uuids and phase records are immutable. */
+export function mergePhases(
+  local: PomodoroPhaseRecord[],
+  remote: RemotePomodoroPhase[],
+): PomodoroPhaseRecord[] {
+  const byId = new Map<string, PomodoroPhaseRecord>()
+  for (const phase of remote) byId.set(phase.id, phase.payload)
+  for (const phase of local) byId.set(phase.id, phase)
   return [...byId.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt))
 }
 
@@ -109,13 +176,24 @@ export function mergeSettings<T>(
   return remote.updatedAt > local.updatedAt ? remote : local
 }
 
-/** What this device pushes: everything it holds, including its tombstones. */
+/**
+ * What this device pushes: everything it holds, including its tombstones.
+ *
+ * **The open time entry is deliberately excluded.** A foreign open entry
+ * landing on a second device would show "working on X" for something started
+ * on another machine, and would break that device's own one-open-entry
+ * invariant on merge with no clean way to unwind. This mirrors the existing,
+ * correct decision that `run` is device-local — a live clock belongs to the
+ * machine it was started on. The cost is that an in-progress entry is
+ * invisible on your phone until it closes; accepted.
+ */
 export function buildPushPayload<T>(params: {
   timeline: LocalTimelineState
-  sessions: PomodoroSessionRecord[]
+  timeEntries: TimeEntryState
+  phases: PomodoroPhaseRecord[]
   settings: RemoteSettings<T> | null
 }) {
-  const { timeline, sessions, settings } = params
+  const { timeline, timeEntries, phases, settings } = params
   return {
     timelineEntries: [
       ...timeline.entries.map((entry) => ({
@@ -131,11 +209,25 @@ export function buildPushPayload<T>(params: {
         payload: null,
       })),
     ],
-    sessions: sessions.map((session) => ({
-      id: session.id,
-      startedAt: session.startedAt,
-      payload: session,
-    })),
+    timeEntries: [
+      ...timeEntries.entries
+        .filter((entry) => entry.endedAt !== null)
+        .map((entry) => ({
+          id: entry.id,
+          updatedAt: entry.updatedAt,
+          deleted: false,
+          startedAt: entry.startedAt,
+          payload: entry,
+        })),
+      ...Object.entries(timeEntries.tombstones).map(([id, updatedAt]) => ({
+        id,
+        updatedAt,
+        deleted: true,
+        startedAt: null,
+        payload: null,
+      })),
+    ],
+    phases: phases.map((phase) => ({ id: phase.id, startedAt: phase.startedAt, payload: phase })),
     settings,
   }
 }

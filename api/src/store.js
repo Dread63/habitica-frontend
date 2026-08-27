@@ -13,9 +13,11 @@ import { dirname } from 'node:path'
  *
  * The schema deliberately keeps this service *dumb* about the app's data
  * shapes: every record stores an opaque JSON `payload` and merges on
- * `(user_id, id)` plus a timestamp. The client can evolve TimelineEntry or
- * PomodoroSessionRecord without a server migration, and the server can't
- * silently corrupt a shape it doesn't understand.
+ * `(user_id, id)` plus a timestamp. The client can evolve TimelineEntry,
+ * TimeEntry or PomodoroPhaseRecord without a server migration, and the server
+ * can't silently corrupt a shape it doesn't understand. The one exception is
+ * `started_at`, denormalised out of the time-entry payload purely so exports
+ * can range-scan.
  */
 
 const SCHEMA = `
@@ -34,10 +36,12 @@ const SCHEMA = `
     PRIMARY KEY (user_id, id)
   );
 
-  -- The audit trail. Append-only by design: a focus session that happened is
-  -- a fact about the past, so there is no UPDATE path here at all (see
-  -- insertSession's INSERT OR IGNORE). This is the table the CSV/JSON export
-  -- reads, and the reason it can be trusted as a record.
+  -- RETIRED. Superseded by time_entries + pomodoro_phases below.
+  --
+  -- Left in place rather than dropped: there is no schema-version column and
+  -- no migration mechanism here, only CREATE TABLE IF NOT EXISTS, so a DROP
+  -- would be irreversible on a NAS that has been running for a while. Old
+  -- rows sit here costing nothing; nothing reads or writes them.
   CREATE TABLE IF NOT EXISTS focus_sessions (
     user_id     TEXT    NOT NULL,
     id          TEXT    NOT NULL,
@@ -47,8 +51,41 @@ const SCHEMA = `
     PRIMARY KEY (user_id, id)
   );
 
-  CREATE INDEX IF NOT EXISTS focus_sessions_by_start
-    ON focus_sessions (user_id, started_at);
+  -- The time ledger: what was worked on, when. **Mutable** — entries are
+  -- editable, so this uses the same last-write-wins + tombstone shape as
+  -- timeline_entries. INSERT OR IGNORE here would silently drop a corrected
+  -- end time and leave two devices permanently divergent with no error.
+  --
+  -- started_at is denormalised out of the payload ONLY so exports can range
+  -- scan; the server still never interprets the rest of it.
+  CREATE TABLE IF NOT EXISTS time_entries (
+    user_id    TEXT    NOT NULL,
+    id         TEXT    NOT NULL,
+    payload    TEXT,
+    started_at TEXT,
+    updated_at INTEGER NOT NULL,
+    deleted    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, id)
+  );
+
+  CREATE INDEX IF NOT EXISTS time_entries_by_start
+    ON time_entries (user_id, started_at);
+
+  -- What the timer did. Genuinely immutable — nothing in the UI edits a phase
+  -- record, and "the clock ran 25 minutes from 09:00" is a fact about a
+  -- machine rather than a claim about a person. This is the record that earns
+  -- the append-only storage focus_sessions above claimed without deserving.
+  CREATE TABLE IF NOT EXISTS pomodoro_phases (
+    user_id     TEXT    NOT NULL,
+    id          TEXT    NOT NULL,
+    started_at  TEXT    NOT NULL,
+    payload     TEXT    NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, id)
+  );
+
+  CREATE INDEX IF NOT EXISTS pomodoro_phases_by_start
+    ON pomodoro_phases (user_id, started_at);
 
   CREATE TABLE IF NOT EXISTS settings (
     user_id    TEXT PRIMARY KEY,
@@ -88,12 +125,33 @@ export function upsertTimelineEntry(db, userId, entry) {
   )
 }
 
-/** Append-only: an existing session id is never overwritten. */
-export function insertSession(db, userId, session) {
+/** Same last-write-wins rule as timeline entries — see upsertTimelineEntry. */
+export function upsertTimeEntry(db, userId, entry) {
   db.prepare(
-    `INSERT OR IGNORE INTO focus_sessions (user_id, id, started_at, payload, recorded_at)
+    `INSERT INTO time_entries (user_id, id, payload, started_at, updated_at, deleted)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (user_id, id) DO UPDATE SET
+       payload    = excluded.payload,
+       started_at = excluded.started_at,
+       updated_at = excluded.updated_at,
+       deleted    = excluded.deleted
+     WHERE time_entries.updated_at <= excluded.updated_at`,
+  ).run(
+    userId,
+    entry.id,
+    entry.deleted ? null : JSON.stringify(entry.payload ?? null),
+    entry.deleted ? null : (entry.startedAt ?? null),
+    entry.updatedAt,
+    entry.deleted ? 1 : 0,
+  )
+}
+
+/** Append-only: an existing phase id is never overwritten. */
+export function insertPhase(db, userId, phase) {
+  db.prepare(
+    `INSERT OR IGNORE INTO pomodoro_phases (user_id, id, started_at, payload, recorded_at)
      VALUES (?, ?, ?, ?, ?)`,
-  ).run(userId, session.id, session.startedAt, JSON.stringify(session.payload), Date.now())
+  ).run(userId, phase.id, phase.startedAt, JSON.stringify(phase.payload), Date.now())
 }
 
 export function upsertSettings(db, userId, settings) {
@@ -119,8 +177,29 @@ export function readTimelineEntries(db, userId) {
     }))
 }
 
-export function readSessions(db, userId, { from, to } = {}) {
-  const clauses = ['user_id = ?']
+/**
+ * Every entry for a user, tombstones included — the sync response needs them
+ * so a delete propagates to other devices.
+ */
+export function readTimeEntries(db, userId) {
+  return db
+    .prepare(`SELECT id, payload, started_at, updated_at, deleted FROM time_entries WHERE user_id = ?`)
+    .all(userId)
+    .map((row) => ({
+      id: row.id,
+      updatedAt: row.updated_at,
+      deleted: row.deleted === 1,
+      startedAt: row.started_at,
+      payload: row.payload === null ? null : JSON.parse(row.payload),
+    }))
+}
+
+/**
+ * Live entries in a date range, for export. Tombstones are excluded here
+ * (their started_at is null), unlike the sync read above.
+ */
+export function readTimeEntriesInRange(db, userId, { from, to } = {}) {
+  const clauses = ['user_id = ?', 'deleted = 0', 'started_at IS NOT NULL']
   const params = [userId]
   if (from) {
     clauses.push('started_at >= ?')
@@ -132,10 +211,20 @@ export function readSessions(db, userId, { from, to } = {}) {
   }
   return db
     .prepare(
-      `SELECT id, started_at, payload FROM focus_sessions
+      `SELECT id, started_at, payload FROM time_entries
        WHERE ${clauses.join(' AND ')} ORDER BY started_at ASC`,
     )
     .all(...params)
+    .map((row) => ({ id: row.id, startedAt: row.started_at, payload: JSON.parse(row.payload) }))
+}
+
+export function readPhases(db, userId) {
+  return db
+    .prepare(
+      `SELECT id, started_at, payload FROM pomodoro_phases
+       WHERE user_id = ? ORDER BY started_at ASC`,
+    )
+    .all(userId)
     .map((row) => ({ id: row.id, startedAt: row.started_at, payload: JSON.parse(row.payload) }))
 }
 
@@ -152,7 +241,11 @@ export function applySync(db, userId, body) {
   db.exec('BEGIN')
   try {
     for (const entry of body.timelineEntries ?? []) upsertTimelineEntry(db, userId, entry)
-    for (const session of body.sessions ?? []) insertSession(db, userId, session)
+    for (const entry of body.timeEntries ?? []) upsertTimeEntry(db, userId, entry)
+    for (const phase of body.phases ?? []) insertPhase(db, userId, phase)
+    // A `sessions` key from a stale cached bundle is ignored rather than
+    // erroring — that's what keeps a rolling deploy (api updated before the
+    // browser reloads) from throwing 500s at the old client.
     if (body.settings) upsertSettings(db, userId, body.settings)
     db.exec('COMMIT')
   } catch (error) {

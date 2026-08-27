@@ -15,9 +15,16 @@ import type { Task, TaskType } from '@/lib/habitica/types'
  *    belt-and-braces fallback that also covers the fetch gap on first paint
  *    and a task deleted from habitica.com directly (which never runs this
  *    app's `pruneTask` cascade).
- * 2. Focus-time attribution runs inside the pomodoro store, which has no
- *    access to the React Query cache — it reads tags straight off these
- *    snapshots (see focusAttribution.ts).
+ * 2. `suggestedTaskRef` runs inside the pomodoro store, which has no access
+ *    to the React Query cache — it reads a task's name and tags straight off
+ *    these snapshots.
+ *
+ * This used to also carry a `completedAt` instant, so focus attribution could
+ * clip a block at the moment its task was ticked off. Attribution is gone —
+ * time is recorded as it happens now (features/tracking) — and with it the
+ * only reason that field existed. Removing it needed no store version bump:
+ * an unread key left in stored JSON is harmless and disappears the next time
+ * `syncTaskSnapshots` rewrites the entry.
  *
  * Kept fresh by `syncTaskSnapshots` whenever tasks load, so a rename or
  * re-tag propagates rather than freezing at creation time.
@@ -34,20 +41,6 @@ export interface TimelineTaskSnapshot {
    * snapshots existed have no value for it; `syncTaskSnapshots` fills it in.
    */
   completed?: boolean
-  /**
-   * When the task was finished, as an ISO instant. Focus attribution clips a
-   * completed block here (see focusAttribution.ts): a block scheduled
-   * 9:00–11:00 whose task was ticked off at 10:00 keeps the hour it actually
-   * absorbed and stops collecting the rest, which would otherwise be credited
-   * to work that has since moved on to something else.
-   *
-   * Exact for to-dos, which carry `dateCompleted` from the API. Dailies have
-   * no such field, so this falls back to the moment `syncTaskSnapshots` first
-   * observed the completion — good to within a poll interval, which is well
-   * under the minute these stats are displayed in. Cleared if the task goes
-   * back to incomplete (a daily reset by Habitica's cron, an undo).
-   */
-  completedAt?: string
 }
 
 /**
@@ -148,22 +141,14 @@ export function createTimelineEntry(
   }
 }
 
-export function taskSnapshotOf(task: Task, observedAt: Date = new Date()): TimelineTaskSnapshot {
-  // Habits have no `completed` field at all — absent means "never done", not
-  // "unknown", so a plain false is correct rather than undefined.
-  const completed = 'completed' in task ? task.completed === true : false
-  if (!completed) return { text: task.text, type: task.type, tagIds: task.tags, completed }
-
-  // To-dos carry an exact `dateCompleted`; dailies don't, so "when we noticed"
-  // is the best available answer. A malformed value falls back the same way
-  // rather than propagating an Invalid Date.
-  const reported = 'dateCompleted' in task && task.dateCompleted ? Date.parse(task.dateCompleted) : NaN
+export function taskSnapshotOf(task: Task): TimelineTaskSnapshot {
   return {
     text: task.text,
     type: task.type,
     tagIds: task.tags,
-    completed,
-    completedAt: Number.isNaN(reported) ? observedAt.toISOString() : new Date(reported).toISOString(),
+    // Habits have no `completed` field at all — absent means "never done",
+    // not "unknown", so a plain false is correct rather than undefined.
+    completed: 'completed' in task ? task.completed === true : false,
   }
 }
 
@@ -183,20 +168,12 @@ export function syncTaskSnapshots(
     const incoming = snapshots.get(entry.taskId)
     if (!incoming) return entry
     const old = entry.taskSnapshot
-    // Completion time is recorded once and then held: for a daily (no
-    // `dateCompleted` from the API) `incoming.completedAt` is just "when this
-    // sync ran", so taking the newest each time would walk the cutoff forward
-    // every poll and never actually stop the block absorbing time.
-    const fresh: TimelineTaskSnapshot =
-      incoming.completed && old?.completed && old.completedAt
-        ? { ...incoming, completedAt: old.completedAt }
-        : incoming
+    const fresh = incoming
     if (
       old &&
       old.text === fresh.text &&
       old.type === fresh.type &&
       old.completed === fresh.completed &&
-      old.completedAt === fresh.completedAt &&
       old.tagIds.length === fresh.tagIds.length &&
       old.tagIds.every((t, i) => t === fresh.tagIds[i])
     ) {
@@ -211,7 +188,7 @@ export function syncTaskSnapshots(
 /**
  * The entry's wall-clock interval as real instants — the bridge from the
  * timeline's (date, minutes-since-midnight) model into the absolute
- * timestamps focus attribution compares against. Returns null for an
+ * timestamps the plan-vs-actual comparison works in. Returns null for an
  * unparseable date rather than guessing.
  */
 export function entryInterval(entry: TimelineEntry): { start: number; end: number } | null {

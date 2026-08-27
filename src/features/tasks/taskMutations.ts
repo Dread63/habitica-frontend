@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { habiticaClient } from '@/lib/habitica/client'
 import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
+import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
 import type { CreateTaskInput, HabiticaUser, ScoreTaskResult, Task, UpdateTaskInput } from '@/lib/habitica/types'
 
 function replaceTaskInCache(queryClient: QueryClient, updated: Task) {
@@ -58,6 +59,11 @@ export function useScoreTask() {
           return t
         }),
       )
+      // Finishing what you were tracking stops the clock. It deliberately
+      // does NOT pick a successor: the app has no idea what you moved on to,
+      // and guessing is how the previous model produced numbers nobody could
+      // trust. The panel shows "Not tracking" until you say.
+      if (direction === 'up') useTimeEntryStore.getState().onTaskDeleted(taskId)
       return { previous }
     },
     onError: (_err, _vars, context) => {
@@ -132,6 +138,11 @@ export function useDeleteTask() {
       // not to be deleted is harmless and simpler than threading the
       // pre-prune entries through the rollback path.
       useTimelineEntryStore.getState().pruneTask(taskId)
+      // Deliberately NOT a cascade like the line above: this only stops the
+      // pointer if it was on this task. The recorded intervals stay — erasing
+      // the record of time you spent on something because you later deleted
+      // it would defeat the whole point of the ledger.
+      useTimeEntryStore.getState().onTaskDeleted(taskId)
       return { previous }
     },
     onError: (_err, _taskId, context) => {

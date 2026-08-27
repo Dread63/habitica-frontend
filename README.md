@@ -35,6 +35,9 @@ it.
 - `docs/implementation-plan.md` — full design: architecture, tech stack, tag-filter engine, phases
 - `docs/habitica-api.md` — curated Habitica API v3 reference for this project
 - `docs/api-examples/` — real example API payloads + a script to capture your own
+- `docs/install-docker.md` — **installing and running it with Docker** (folders, Portainer,
+  Synology, backups, updating, troubleshooting)
+- `docs/deploy-synology.md` — how the images get built and published (GitHub Actions → GHCR)
 
 ## Local development
 
@@ -43,41 +46,57 @@ npm install
 npm run dev            # no configuration needed — see the note below
 ```
 
-## Docker
+## Install with Docker
 
-```sh
-docker compose up --build          # http://localhost:8080
-HOST_PORT=9000 docker compose up --build   # ...or pick another port
+**Full instructions: [docs/install-docker.md](docs/install-docker.md)** — folder layout, Portainer
+and Synology walkthroughs, backups, updating, troubleshooting.
+
+The short version. Two containers and one folder:
+
+```
+habitica-frontend/            ← create this folder anywhere
+├── docker-compose.yml        ← from deploy/docker-compose.yml
+└── data/                     ← created for you; THIS is what to back up
+    └── focus.sqlite          ← your timeline + focus history
 ```
 
-Deploying to a NAS or another always-on box? See **[docs/deploy-synology.md](docs/deploy-synology.md)** —
-prebuilt multi-arch images are published to `ghcr.io/dread63/habitica-frontend` on every push to
-`master`, so the target host never needs a build toolchain.
+```sh
+mkdir -p ~/docker/habitica-frontend && cd ~/docker/habitica-frontend
+curl -O https://raw.githubusercontent.com/Dread63/habitica-frontend/master/deploy/docker-compose.yml
+docker compose up -d          # http://localhost:8080
+```
+
+| container | role | holds data |
+|---|---|---|
+| `web` | nginx serving the app, proxies `/api/` to `api` | no |
+| `api` | sync + export service, owns one SQLite file | yes, in `data/` |
+
+`web` runs fine on its own if you don't want sync — the app falls back to browser storage, which
+is per-device. With `api`, your timeline and time log follow you between devices and can be
+exported as CSV or JSON from the pomodoro dialog's **Data** tab.
+
+**Time is recorded, not inferred.** One task is "active" at a time; starting, switching or
+stopping writes a real interval as it happens. A minute, once elapsed, belongs to whoever owned
+it then — rearranging your plan afterwards can't move it. The CSV export is one row per interval
+with its own start and end, so summing by task or category in a spreadsheet gives exact totals.
+
+Prebuilt multi-arch images (amd64 + arm64) are published to `ghcr.io/dread63/habitica-frontend`
+and `…-api` on every push to `master`, so the host never needs a build toolchain. Deploying to a
+NAS: **[docs/deploy-synology.md](docs/deploy-synology.md)**.
+
+### Building locally instead
+
+```sh
+docker compose up --build             # http://localhost:8080
+HOST_PORT=9000 docker compose up --build
+```
 
 **No build-time configuration.** The app used to require `VITE_HABITICA_CLIENT_ID` (Habitica's
 mandatory `x-client` header) to be set before building, which made every build personal to one
 account. That header is now derived from the user id you log in with, so a single published image
 works for anyone and there is nothing to configure before `npm run dev` or `docker compose up`.
 
-**Verified against a real Docker daemon** (OrbStack, macOS host) — first time this exact command
-has actually been run, not just inspected:
-- the multi-stage build completes (`node:22-alpine` build → `nginx:1.27-alpine` serve), image
-  ends up ~78MB
-- `curl http://localhost:8080/healthz` returns `ok`, and — the thing that turned out to actually
-  matter — `docker ps` reports the container itself `(healthy)`, not just externally reachable
-  (see the `HEALTHCHECK` fix note above)
-- the app loads at `http://localhost:8080`, and a hard refresh at a client-routed path (e.g.
-  `/tasks/anything`, not just `/`) returns `200` with `index.html`, not a `404` — confirming
-  `nginx.conf`'s SPA fallback (`try_files $uri /index.html`) actually works, not just reads
-  correctly
-- hashed assets (`/assets/*.js`) serve with `Cache-Control: public, max-age=31536000, immutable`;
-  `index.html` itself serves `no-cache`, as intended
-
-**Still not verified: logging in against a real Habitica account end-to-end.** Everything above
-was checked without live Habitica credentials in the loop — worth doing once, but it exercises
-`src/lib/habitica/client.ts` against the real API, not anything Docker-specific.
-
-If anything's wrong, `Dockerfile`/`docker-compose.yml`/`nginx.conf` are the three files to check
-first — see `CLAUDE.md`'s Phase 6 note for what "hardening" still means beyond just working
-(multi-arch build, versioned tags, TLS-behind-reverse-proxy notes — a packaging/publishing
-decision, not something broken).
+**Your Habitica API token never reaches your server.** The app calls habitica.com directly from
+the browser; the `api` container only ever stores timeline placements and focus history. It also
+has no authentication of its own, so keep it on a trusted network — see the Security section of
+the install guide.

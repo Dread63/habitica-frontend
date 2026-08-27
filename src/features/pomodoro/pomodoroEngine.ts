@@ -17,9 +17,8 @@ export type PomodoroPhase = 'work' | 'shortBreak' | 'longBreak'
  * was logged, `phase` already holds the *next* one, and the clock is
  * deliberately stopped until the user presses start. The timer never rolls
  * itself into a break (or out of one) — a break you didn't notice starting
- * is a break you didn't take, and it also made focus-time attribution
- * guesswork, since the app couldn't tell working time from ignored-break
- * time.
+ * is a break you didn't take, and an auto-started next phase would quietly
+ * record minutes you weren't there for.
  */
 export type PomodoroStatus = 'idle' | 'running' | 'paused' | 'awaiting'
 
@@ -44,25 +43,10 @@ export interface PomodoroSettings {
 }
 
 /**
- * A task linked to a focus session — title/tags snapshotted at link time,
- * so the store can log completed phases without reaching into the query
- * cache, and so history survives the task being deleted or re-tagged
- * mid-session. A session can link *several* (finishing more than one thing
- * in a 25-minute block is normal); an empty list is an untracked session.
- */
-export interface PomodoroTaskRef {
-  id: string
-  text: string
-  tagIds: string[]
-}
-
-/**
  * One contiguous stretch of wall-clock time the timer was actually running.
  * A phase paused halfway through and resumed twenty minutes later has two
- * segments — and that gap matters, because focus time is attributed by
- * overlapping these real intervals against the timeline (see
- * focusAttribution.ts). Elapsed time is *derived* from these rather than
- * stored alongside them, so the two can never disagree.
+ * segments. Elapsed time is *derived* from these rather than stored alongside
+ * them, so the two can never disagree.
  */
 export interface FocusSegment {
   startedAt: string
@@ -72,20 +56,17 @@ export interface FocusSegment {
 export interface PomodoroRunState {
   status: PomodoroStatus
   phase: PomodoroPhase
-  tasks: PomodoroTaskRef[]
-  /**
-   * True once the user has hand-picked the linked set (added or removed a
-   * chip, or started from a specific task). While false, `tasks` is only an
-   * auto-suggestion from the timeline and gets re-derived at the start of
-   * every focus phase — otherwise a set chosen at 9am would still be linked
-   * three phases later, long after you'd finished that task and scheduled
-   * its successor. Pinning it makes the choice stick for the whole session.
-   */
-  tasksPinned: boolean
   /** ISO instant this phase's clock last (re)started; null unless running. */
   runningStartedAt: string | null
   /** Closed active intervals of *this phase*, accumulated across pause/resume. */
   segments: FocusSegment[]
+  /**
+   * Id of the phase currently in flight, minted when it starts. Time entries
+   * opened during it carry this as their `phaseId`, which is what lets the
+   * ledger and the phase log be joined without either owning the other.
+   * Null while idle.
+   */
+  phaseId: string | null
   /** Completed work sessions since the last long break, 0..sessionsBeforeLongBreak-1. */
   sessionsCompletedInCycle: number
 }
@@ -105,10 +86,9 @@ export function defaultPomodoroSettings(): PomodoroSettings {
 export const IDLE_RUN_STATE: PomodoroRunState = {
   status: 'idle',
   phase: 'work',
-  tasks: [],
-  tasksPinned: false,
   runningStartedAt: null,
   segments: [],
+  phaseId: null,
   sessionsCompletedInCycle: 0,
 }
 
@@ -163,6 +143,9 @@ export function closeSegments(run: PomodoroRunState, at: Date): FocusSegment[] {
 }
 
 export interface CompletedPhase {
+  /** The id this phase carried while it ran — carried through so the record
+   * written from it keeps the same identity the time entries reference. */
+  id: string | null
   phase: PomodoroPhase
   /** First moment the phase's clock ever ran (ignores later pause gaps). */
   startedAt: string
@@ -205,8 +188,12 @@ export function advancePhase(
       sessionsCompletedInCycle: next.sessionsCompletedInCycle,
       runningStartedAt: null,
       segments: [],
+      // The finished phase's id belongs to the record now; the next phase
+      // mints its own when it actually starts.
+      phaseId: null,
     },
     completed: {
+      id: run.phaseId,
       phase: run.phase,
       startedAt: segments[0].startedAt,
       endedAt: new Date(endMs).toISOString(),

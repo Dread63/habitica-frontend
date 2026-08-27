@@ -275,41 +275,6 @@ describe('focusCandidateEntries', () => {
   })
 })
 
-describe('syncTaskSnapshots — completion time', () => {
-  const done = (completedAt?: string): TimelineTaskSnapshot => ({
-    text: 'T',
-    type: 'todo',
-    tagIds: [],
-    completed: true,
-    completedAt,
-  })
-
-  it('records the completion instant the first time it sees one', () => {
-    const list = [entry({ taskId: 't1', taskSnapshot: { text: 'T', type: 'todo', tagIds: [], completed: false } })]
-    const result = syncTaskSnapshots(list, new Map([['t1', done('2026-08-25T10:00:00.000Z')]]))
-    expect(result[0].taskSnapshot?.completedAt).toBe('2026-08-25T10:00:00.000Z')
-  })
-
-  it('holds the first instant rather than walking it forward each poll', () => {
-    // Dailies have no dateCompleted, so every sync proposes "now" — taking
-    // the newest would keep pushing the cutoff and never stop the block
-    // absorbing time.
-    const list = [entry({ taskId: 't1', taskSnapshot: done('2026-08-25T10:00:00.000Z') })]
-    const result = syncTaskSnapshots(list, new Map([['t1', done('2026-08-25T10:30:00.000Z')]]))
-    expect(result).toBe(list) // nothing changed, so the same reference comes back
-    expect(result[0].taskSnapshot?.completedAt).toBe('2026-08-25T10:00:00.000Z')
-  })
-
-  it('clears the instant when the task goes back to incomplete', () => {
-    // A daily reset by Habitica's cron, or an undo.
-    const list = [entry({ taskId: 't1', taskSnapshot: done('2026-08-25T10:00:00.000Z') })]
-    const reopened: TimelineTaskSnapshot = { text: 'T', type: 'todo', tagIds: [], completed: false }
-    const result = syncTaskSnapshots(list, new Map([['t1', reopened]]))
-    expect(result[0].taskSnapshot?.completed).toBe(false)
-    expect(result[0].taskSnapshot?.completedAt).toBeUndefined()
-  })
-})
-
 describe('rescheduleEntry', () => {
   it('moves date, start and duration in one step, keeping identity', () => {
     const original = entry({ id: 'e1', taskId: 't1', date: '2026-08-25', startMinutes: 540, durationMinutes: 30 })

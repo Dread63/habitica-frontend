@@ -8,8 +8,8 @@ import { useTimelineEntryStore } from './timelineEntryStore'
  *
  * Entries carry a snapshot so a block never degrades to "Deleted task" when
  * Habitica stops returning a task (completing a to-do does exactly that) and
- * so focus attribution — which runs inside a Zustand store, with no access
- * to the query cache — can read a task's tags. A snapshot frozen at
+ * so the pomodoro store's timeline suggestion — which runs with no access to
+ * the query cache — can read a task's name and tags. A snapshot frozen at
  * scheduling time would go stale on the first rename, hence this.
  *
  * Mounted once in the authed shell (App.tsx) rather than per-page, so a
@@ -21,9 +21,9 @@ import { useTimelineEntryStore } from './timelineEntryStore'
  * *disappears* from `GET /tasks/user` the moment it's completed. On the
  * plain query a finished to-do would therefore keep `completed: false`
  * forever — which is exactly the state that had the timer proposing a
- * finished task for the next focus session. The cost is one extra request
- * per stale window, deduped and shared with the Dashboard's "Show
- * completed" toggle.
+ * finished task for the next focus phase. The cost is one extra request per
+ * stale window, deduped and shared with the Dashboard's "Show completed"
+ * toggle.
  */
 export function useTimelineSnapshotSync(): void {
   const tasksById = useTaskLookup()

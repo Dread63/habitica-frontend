@@ -8,15 +8,20 @@ import { useTags } from '@/features/tasks/useTags'
 import {
   aggregateByCategory,
   dailyFocusSeries,
-  formatFocusMinutes,
-  sessionsOnDate,
+  distinctTaskCount,
+  formatDuration,
   topTasks,
-  totalFocusMinutes,
-  untrackedMinutes,
-} from './pomodoroStats'
+  totalTrackedMs,
+  untrackedCategoryMs,
+} from '@/features/tracking/trackingStats'
+import { entriesOverlappingDay, openEntryOf } from '@/features/tracking/timeEntries'
+import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
+import { useNowTick } from '@/lib/useNowTick'
+import { comparePlanToActual } from '@/features/tracking/planVsActual'
+import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
 import { categoryFill } from './pomodoroCategories'
+import { completedPomodoros, phaseActualMs, workPhases } from './pomodoroPhases'
 import { usePomodoroStore } from './pomodoroStore'
-import { useLiveFocusSession } from './useLiveFocusSession'
 
 const TREND_DAYS = 7
 const TOP_TASK_LIMIT = 6
@@ -64,18 +69,23 @@ function StatTile({
  *  - **The 7-day trend** (stacked columns) has to partition a whole, so it
  *    assigns each slice of time to a single *primary* category (see
  *    dailyFocusSeries). Column height is real minutes.
- *  - **Top tasks** is the raw per-task attribution, no tag math at all.
+ *  - **Top tasks** sums recorded intervals per task, no tag math at all.
  *
- * Every category readout carries a visible name and minute count next to its
+ * Every category readout carries a visible name and duration next to its
  * swatch: the palette's light-mode steps sit below 3:1 contrast on white for
  * three of the eight slots, and the documented relief for that is labels
  * rather than re-picking hues (see index.css).
  */
 export function PomodoroDayStats({ date }: { date: string }) {
-  const history = usePomodoroStore((s) => s.history)
+  const entries = useTimeEntryStore((s) => s.entries)
+  const phases = usePomodoroStore((s) => s.phases)
   const trackedTagIds = usePomodoroStore((s) => s.settings.trackedTagIds)
   const tagsQuery = useTags()
   const [hoveredDay, setHoveredDay] = React.useState<string | null>(null)
+  // An open entry grows in real time; without this the day total would sit
+  // frozen until some unrelated state change forced a render.
+  useNowTick(15_000)
+  const now = new Date()
 
   const tagNamesById = React.useMemo(
     () => new Map((tagsQuery.data ?? []).map((t) => [t.id, t.name])),
@@ -87,59 +97,59 @@ export function PomodoroDayStats({ date }: { date: string }) {
   const anchor = parseDateOnlyString(date) ?? today()
   const isToday = date === toDateOnlyString(today())
 
-  // The focus phase in flight, folded in as a provisional session so every
-  // reading below moves while you work rather than jumping once per phase.
-  // It only belongs to the day it started on, so viewing an earlier day is
-  // unaffected.
-  const live = useLiveFocusSession()
-  const liveOnThisDay = live !== null && sessionsOnDate([live], date).length === 1 ? live : null
-  const liveMinutes = liveOnThisDay?.durationMinutes ?? 0
+  const dayEntries = entriesOverlappingDay(entries, date, now)
+  const trackedMs = totalTrackedMs(dayEntries, now)
+  const isTrackingNow = isToday && openEntryOf(entries) !== undefined
 
-  const loggedSessions = sessionsOnDate(history, date)
-  const daySessions = liveOnThisDay ? [...loggedSessions, liveOnThisDay] : loggedSessions
-  const allSessions = liveOnThisDay ? [...history, liveOnThisDay] : history
+  // Pomodoro counts come from the PHASE log, tracked time from the LEDGER.
+  // They are different records answering different questions and will not
+  // agree — see the note rendered under the tiles.
+  const dayPhases = phases.filter((p) => toDateOnlyString(new Date(p.startedAt)) === date)
+  const pomodoros = completedPomodoros(dayPhases).length
+  const dayWorkPhases = workPhases(dayPhases)
+  const stoppedEarly = dayWorkPhases.length - pomodoros
+  const avgPomodoroMs =
+    dayWorkPhases.length === 0
+      ? 0
+      : dayWorkPhases.reduce((sum, p) => sum + phaseActualMs(p), 0) / dayWorkPhases.length
 
-  const focusMinutes = totalFocusMinutes(daySessions)
-  // Completed-pomodoro count and the average both describe *finished*
-  // sessions, so they deliberately ignore the in-progress one — otherwise
-  // starting a session would drag the day's average down as it ran.
-  const pomodoros = loggedSessions.filter((s) => s.completedNaturally).length
-  const stoppedEarly = loggedSessions.length - pomodoros
-  const loggedMinutes = totalFocusMinutes(loggedSessions)
-  const avgSession = loggedSessions.length === 0 ? 0 : loggedMinutes / loggedSessions.length
-
-  const untracked = untrackedMinutes(daySessions, trackedTagIds)
-  // Clamped: attribution minutes are rounded to 2dp per item, so a long day
-  // can drift a hair past the session totals and produce 101% or -1%.
+  const untracked = untrackedCategoryMs(dayEntries, trackedTagIds, now)
   const trackedShare =
-    focusMinutes === 0 ? 0 : Math.min(100, Math.max(0, Math.round(((focusMinutes - untracked) / focusMinutes) * 100)))
+    trackedMs === 0 ? 0 : Math.min(100, Math.max(0, Math.round(((trackedMs - untracked) / trackedMs) * 100)))
 
-  const categories = Object.entries(aggregateByCategory(daySessions, trackedTagIds))
-    .map(([tagId, minutes]) => ({ tagId, minutes, name: nameOf(tagId) }))
-    .sort((a, b) => b.minutes - a.minutes)
-  const categoryScale = Math.max(focusMinutes, ...categories.map((c) => c.minutes), 1)
+  const categories = Object.entries(aggregateByCategory(dayEntries, trackedTagIds, now))
+    .map(([tagId, ms]) => ({ tagId, ms, name: nameOf(tagId) }))
+    .sort((a, b) => b.ms - a.ms)
+  const categoryScale = Math.max(trackedMs, ...categories.map((c) => c.ms), 1)
 
   const trend = React.useMemo(
-    () => dailyFocusSeries(allSessions, TREND_DAYS, anchor, trackedTagIds),
-    // anchor is derived from `date`; depending on the Date object itself
-    // would rebuild this every render. liveMinutes stands in for the
-    // provisional session, which is a fresh object on every tick.
+    () => dailyFocusSeries(entries, TREND_DAYS, anchor, trackedTagIds),
+    // anchor derives from `date`; depending on the Date object itself would
+    // rebuild this every render. trackedMs stands in for the open entry,
+    // which grows on every tick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [history, date, trackedTagIds, liveMinutes],
+    [entries, date, trackedTagIds, trackedMs],
   )
-  const trendMax = Math.max(...trend.map((d) => d.totalMinutes), 1)
-  const trendTotal = trend.reduce((sum, d) => sum + d.totalMinutes, 0)
+  const trendMax = Math.max(...trend.map((d) => d.totalMs), 1)
+  const trendTotal = trend.reduce((sum, d) => sum + d.totalMs, 0)
   const hoveredTrendDay = trend.find((d) => d.date === hoveredDay)
 
-  const tasks = topTasks(daySessions, TOP_TASK_LIMIT)
-  const otherTaskCount = Math.max(0, new Set(daySessions.flatMap((s) => s.attribution.map((a) => a.taskId))).size - tasks.length)
-  // Which of those rows the in-progress session is still adding to — shown
-  // with a live dot, so a number that's climbing is visibly doing so.
-  const liveTaskIds = new Set(liveOnThisDay?.attribution.map((a) => a.taskId) ?? [])
+  // Planned vs recorded. Only meaningful now that the two are genuinely
+  // separate records — under the old model the plan *was* the evidence.
+  const planEntries = useTimelineEntryStore((s) => s.entries)
+  const comparison = React.useMemo(
+    () => comparePlanToActual(planEntries, entries, date, now),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planEntries, entries, date, trackedMs],
+  )
+  const adherence =
+    comparison.trackedMs === 0 ? null : Math.round((comparison.adherentMs / comparison.trackedMs) * 100)
+
+  const tasks = topTasks(dayEntries, TOP_TASK_LIMIT, now)
+  const otherTaskCount = Math.max(0, distinctTaskCount(dayEntries) - tasks.length)
+  const liveTaskId = openEntryOf(entries)?.taskId ?? null
   const tasksRef = useTwemoji<HTMLUListElement>([tasks.map((t) => t.text).join('|')])
 
-  // Legend covers every category that actually appears in the week's
-  // columns, in tracked order so colors stay stable across renders.
   const legendTagIds = [
     ...trackedTagIds.filter((tagId) => trend.some((d) => d.slices.some((s) => s.tagId === tagId))),
     ...(trend.some((d) => d.slices.some((s) => s.tagId === null)) ? [null] : []),
@@ -150,12 +160,10 @@ export function PomodoroDayStats({ date }: { date: string }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile
           icon={Timer}
-          value={formatFocusMinutes(focusMinutes)}
-          label={isToday ? 'Focus today' : 'Focus this day'}
+          value={formatDuration(trackedMs)}
+          label={isToday ? 'Tracked today' : 'Tracked this day'}
           hint={
-            liveMinutes > 0
-              ? `${formatFocusMinutes(loggedMinutes)} logged · ${formatFocusMinutes(liveMinutes)} in progress`
-              : `${formatFocusMinutes(trendTotal)} over ${TREND_DAYS} days`
+            isTrackingNow ? 'still counting' : `${formatDuration(trendTotal)} over ${TREND_DAYS} days`
           }
         />
         <StatTile
@@ -164,14 +172,59 @@ export function PomodoroDayStats({ date }: { date: string }) {
           label="Pomodoros completed"
           hint={stoppedEarly > 0 ? `${stoppedEarly} stopped early` : undefined}
         />
-        <StatTile icon={Gauge} value={formatFocusMinutes(avgSession)} label="Average session" />
+        <StatTile icon={Gauge} value={formatDuration(avgPomodoroMs)} label="Average pomodoro" />
         <StatTile
           icon={Target}
           value={`${trackedShare}%`}
           label="In a tracked category"
-          hint={untracked > 0 ? `${formatFocusMinutes(untracked)} untracked` : undefined}
+          hint={untracked > 0 ? `${formatDuration(untracked)} uncategorised` : undefined}
         />
       </div>
+
+      {/* Without this, "4 pomodoros · 1h 38m tracked" reads as a bug and
+          someone eventually "reconciles" the two into one wrong number. */}
+      <p className="-mt-1 text-[11px] text-muted-foreground/70">
+        Pomodoros count completed timer phases; tracked time is what the pointer actually recorded. They answer
+        different questions and will rarely match exactly — time worked past the bell counts, an ignored break
+        doesn't.
+      </p>
+
+      {comparison.plannedMs > 0 && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
+          <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+            Planned vs tracked
+          </h3>
+          <p className="text-sm">
+            Planned <span className="font-medium">{formatDuration(comparison.plannedMs)}</span> · tracked{' '}
+            <span className="font-medium">{formatDuration(comparison.trackedMs)}</span>
+            {adherence !== null && (
+              <>
+                {' '}
+                · <span className="font-medium">{adherence}%</span> of tracked time went to what you'd planned
+                for that moment
+              </>
+            )}
+          </p>
+          <ul className="flex flex-col gap-1">
+            {comparison.rows.slice(0, 5).map((row) => (
+              <li key={row.taskId} className="flex items-center gap-2 text-xs">
+                <span className="min-w-0 flex-1 truncate">{row.text}</span>
+                <span className="shrink-0 text-muted-foreground tabular-nums">
+                  planned {formatDuration(row.plannedMs)} · tracked {formatDuration(row.actualMs)}
+                </span>
+                <span
+                  className={cn(
+                    'w-16 shrink-0 text-right tabular-nums',
+                    row.deltaMs > 0 ? 'text-primary' : row.deltaMs < 0 ? 'text-muted-foreground' : 'text-muted-foreground/60',
+                  )}
+                >
+                  {row.deltaMs === 0 ? '—' : `${row.deltaMs > 0 ? '+' : '−'}${formatDuration(Math.abs(row.deltaMs))}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* Category totals for the viewed day. */}
@@ -199,14 +252,14 @@ export function PomodoroDayStats({ date }: { date: string }) {
                     <span
                       className="block h-full rounded-full"
                       style={{
-                        width: `${(c.minutes / categoryScale) * 100}%`,
+                        width: `${(c.ms / categoryScale) * 100}%`,
                         backgroundColor: categoryFill(c.tagId, trackedTagIds),
                       }}
                     />
                   </span>
                   <span className="w-20 shrink-0 text-right text-muted-foreground tabular-nums">
-                    {formatFocusMinutes(c.minutes)}
-                    {focusMinutes > 0 && ` · ${Math.round((c.minutes / focusMinutes) * 100)}%`}
+                    {formatDuration(c.ms)}
+                    {trackedMs > 0 && ` · ${Math.round((c.ms / trackedMs) * 100)}%`}
                   </span>
                 </li>
               ))}
@@ -217,7 +270,7 @@ export function PomodoroDayStats({ date }: { date: string }) {
                     className="size-2.5 shrink-0 rounded-full opacity-50"
                     style={{ backgroundColor: categoryFill(null, trackedTagIds) }}
                   />
-                  <span className="w-24 shrink-0 truncate">Untracked</span>
+                  <span className="w-24 shrink-0 truncate">Uncategorised</span>
                   <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-muted">
                     <span
                       className="block h-full rounded-full opacity-50"
@@ -227,7 +280,7 @@ export function PomodoroDayStats({ date }: { date: string }) {
                       }}
                     />
                   </span>
-                  <span className="w-20 shrink-0 text-right tabular-nums">{formatFocusMinutes(untracked)}</span>
+                  <span className="w-20 shrink-0 text-right tabular-nums">{formatDuration(untracked)}</span>
                 </li>
               )}
             </ul>
@@ -238,26 +291,25 @@ export function PomodoroDayStats({ date }: { date: string }) {
           </h3>
           {tasks.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              Nothing logged this day yet. A focus session starts showing up here as soon as it's running.
+              Nothing tracked this day yet. Time appears here the moment you start working on something.
             </p>
           ) : (
             <ul ref={tasksRef} className="flex flex-col gap-1">
               {tasks.map((t) => (
-                <li key={t.taskId ?? 'uncategorized'} className="flex items-center gap-2 text-xs">
+                <li key={t.taskId} className="flex items-center gap-2 text-xs">
                   <span
-                    className={cn('min-w-0 flex-1 truncate', t.taskId === null && 'text-muted-foreground italic')}
-                  >
+                    className="min-w-0 flex-1 truncate">
                     {emojify(t.text)}
                   </span>
                   {/* A steady dot on rows the running session is still adding
                       to — otherwise a climbing number looks like a glitch. */}
-                  {liveTaskIds.has(t.taskId) && (
+                  {liveTaskId === t.taskId && (
                     <span
                       className="size-1.5 shrink-0 rounded-full bg-primary"
-                      title="Still counting — this session is in progress"
+                      title="Still counting — you are working on this now"
                     />
                   )}
-                  <span className="shrink-0 text-muted-foreground tabular-nums">{formatFocusMinutes(t.minutes)}</span>
+                  <span className="shrink-0 text-muted-foreground tabular-nums">{formatDuration(t.ms)}</span>
                 </li>
               ))}
               {otherTaskCount > 0 && (
@@ -278,7 +330,7 @@ export function PomodoroDayStats({ date }: { date: string }) {
             {trend.map((day) => {
               const dayDate = parseDateOnlyString(day.date)
               const isAnchor = day.date === date
-              const heightPct = (day.totalMinutes / trendMax) * 100
+              const heightPct = (day.totalMs / trendMax) * 100
               return (
                 <div
                   key={day.date}
@@ -289,15 +341,15 @@ export function PomodoroDayStats({ date }: { date: string }) {
                   onBlur={() => setHoveredDay(null)}
                   tabIndex={0}
                   role="img"
-                  aria-label={`${dayDate?.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) ?? day.date}: ${formatFocusMinutes(day.totalMinutes)} of focus`}
+                  aria-label={`${dayDate?.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) ?? day.date}: ${formatDuration(day.totalMs)} tracked`}
                 >
                   <span
                     className={cn(
                       'text-[10px] tabular-nums',
-                      day.totalMinutes > 0 ? 'text-muted-foreground' : 'text-transparent',
+                      day.totalMs > 0 ? 'text-muted-foreground' : 'text-transparent',
                     )}
                   >
-                    {formatFocusMinutes(day.totalMinutes)}
+                    {formatDuration(day.totalMs)}
                   </span>
                   {/* The plot band. The bar is absolutely positioned inside
                       it so its percentage height resolves against *this*
@@ -309,7 +361,7 @@ export function PomodoroDayStats({ date }: { date: string }) {
                         separate marks rather than one blended band. */}
                     <div
                       className="absolute inset-x-0 bottom-0 mx-auto flex max-w-10 flex-col-reverse gap-[2px] overflow-hidden rounded-t"
-                      style={{ height: `${Math.max(heightPct, day.totalMinutes > 0 ? 2 : 0)}%` }}
+                      style={{ height: `${Math.max(heightPct, day.totalMs > 0 ? 2 : 0)}%` }}
                     >
                       {day.slices.map((slice) => (
                         <span
@@ -320,7 +372,7 @@ export function PomodoroDayStats({ date }: { date: string }) {
                           // radii here would land on the wrong end anyway.
                           className={cn('block w-full', slice.tagId === null && 'opacity-50')}
                           style={{
-                            height: `${(slice.minutes / day.totalMinutes) * 100}%`,
+                            height: `${(slice.ms / day.totalMs) * 100}%`,
                             backgroundColor: categoryFill(slice.tagId, trackedTagIds),
                           }}
                         />
@@ -362,8 +414,8 @@ export function PomodoroDayStats({ date }: { date: string }) {
             </ul>
           )}
           <p className="text-[11px] text-muted-foreground/70">
-            Columns are real focus minutes, split by each block's primary category. The bars on the left count every
-            tracked tag a task carries, so those can total more than the day itself.
+            Columns are real tracked minutes, split by each interval's primary category. The bars on the left
+            count every tracked tag a task carries, so those can total more than the day itself.
           </p>
         </div>
       </div>
@@ -376,7 +428,7 @@ function TrendTooltip({
   nameOf,
   trackedTagIds,
 }: {
-  day: { date: string; totalMinutes: number; sessions: number; slices: { tagId: string | null; minutes: number }[] }
+  day: { date: string; totalMs: number; entryCount: number; slices: { tagId: string | null; ms: number }[] }
   nameOf: (tagId: string | null) => string
   trackedTagIds: string[]
 }) {
@@ -392,7 +444,7 @@ function TrendTooltip({
     <div className="pointer-events-none absolute top-0 left-1/2 z-20 w-44 -translate-x-1/2 rounded-md border border-border bg-card p-2 text-[11px] shadow-lg">
       <p className="font-medium">{label}</p>
       <p className="text-muted-foreground">
-        {formatFocusMinutes(day.totalMinutes)} · {day.sessions} session{day.sessions === 1 ? '' : 's'}
+        {formatDuration(day.totalMs)} · {day.entryCount} interval{day.entryCount === 1 ? '' : 's'}
       </p>
       {day.slices.length > 0 && (
         <ul className="mt-1 flex flex-col gap-0.5">
@@ -404,7 +456,7 @@ function TrendTooltip({
                 style={{ backgroundColor: categoryFill(slice.tagId, trackedTagIds) }}
               />
               <span className="min-w-0 flex-1 truncate">{nameOf(slice.tagId)}</span>
-              <span className="shrink-0 text-muted-foreground tabular-nums">{formatFocusMinutes(slice.minutes)}</span>
+              <span className="shrink-0 text-muted-foreground tabular-nums">{formatDuration(slice.ms)}</span>
             </li>
           ))}
         </ul>

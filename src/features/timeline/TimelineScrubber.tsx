@@ -5,9 +5,15 @@ import { emojify } from '@/lib/emoji'
 import { useTwemoji } from '@/lib/useTwemoji'
 import type { Task } from '@/lib/habitica/types'
 import { isSameDate, parseDateOnlyString, today } from '@/lib/dateOnly'
-import { formatMinutesOfDay, minutesFromDate, MINUTES_PER_DAY } from '@/lib/timeOfDay'
+import { formatMinutesOfDay, MINUTES_PER_DAY } from '@/lib/timeOfDay'
+import { useNowMinutes } from '@/lib/useNowTick'
 import { TASK_TYPE_META } from '@/features/tasks/taskType'
+import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
 import { usePomodoroStore } from '@/features/pomodoro/pomodoroStore'
+import { categoryFill } from '@/features/pomodoro/pomodoroCategories'
+import { entriesOverlappingDay } from '@/features/tracking/timeEntries'
+import { timeEntryToDayBand } from '@/features/tracking/planVsActual'
+import { openEntryOf, taskRefOf } from '@/features/tracking/timeEntries'
 import {
   clampStartMinutes,
   snapToGrid,
@@ -29,6 +35,11 @@ const AXIS_H = 28
 const LANE_H = 64
 const LANE_GAP = 8
 const MIN_VISIBLE_LANES = 3
+/** The "actual" ribbon under the planned lanes. One lane is enough by
+ * construction: recorded intervals never overlap, and a single unbroken band
+ * is itself the visual proof that every minute has exactly one owner. */
+const RIBBON_H = 26
+const RIBBON_GAP = 10
 
 interface TimelineScrubberProps {
   date: string
@@ -47,20 +58,6 @@ interface ResizePreview {
   edge: 'start' | 'end'
   startMinutes: number
   durationMinutes: number
-}
-
-function useNowMinutes(): number {
-  const [minutes, setMinutes] = React.useState(() => minutesFromDate(new Date()))
-  React.useEffect(() => {
-    const update = () => setMinutes(minutesFromDate(new Date()))
-    const id = window.setInterval(update, 30_000)
-    document.addEventListener('visibilitychange', update)
-    return () => {
-      window.clearInterval(id)
-      document.removeEventListener('visibilitychange', update)
-    }
-  }, [])
-  return minutes
 }
 
 /**
@@ -99,6 +96,26 @@ export function TimelineScrubber({
 
   const { laned, laneCount } = React.useMemo(() => assignLanes(entries), [entries])
   const bodyH = Math.max(laneCount, MIN_VISIBLE_LANES) * LANE_H + LANE_GAP
+  const ribbonTop = AXIS_H + bodyH + RIBBON_GAP
+
+  // The recorded half of the day. Deliberately read straight from the ledger
+  // rather than derived from the blocks above — that separation is the whole
+  // point, and the gaps between bands are honest untracked time.
+  const trackedTagIds = usePomodoroStore((s) => s.settings.trackedTagIds)
+  const timeEntries = useTimeEntryStore((s) => s.entries)
+  const ribbon = React.useMemo(() => {
+    const now = new Date()
+    return entriesOverlappingDay(timeEntries, date, now)
+      .map((entry) => {
+        const band = timeEntryToDayBand(entry, date, now)
+        if (!band) return null
+        const primaryTag = entry.taskSnapshot.tagIds.find((t) => trackedTagIds.includes(t)) ?? null
+        return { entry, band, primaryTag }
+      })
+      .filter((b): b is NonNullable<typeof b> => b !== null)
+    // nowMinutes keeps an open interval growing as the clock moves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeEntries, date, trackedTagIds, nowMinutes])
 
   // Initial scroll: land the interesting part of the day in view.
   React.useEffect(() => {
@@ -194,7 +211,7 @@ export function TimelineScrubber({
     >
       <div
         className="relative"
-        style={{ width: 24 * hourPx, height: AXIS_H + bodyH }}
+        style={{ width: 24 * hourPx, height: ribbonTop + RIBBON_H }}
         onDragOver={(event) => {
           event.preventDefault() // required for onDrop to fire at all
           event.dataTransfer.dropEffect = 'move'
@@ -226,6 +243,35 @@ export function TimelineScrubber({
             Drag tasks here — or right-click any task card and send it to the timeline.
           </p>
         )}
+
+        {/* Divider between what you planned and what you did. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 border-t border-dashed border-border"
+          style={{ top: ribbonTop - RIBBON_GAP / 2, width: 24 * hourPx }}
+        />
+        {ribbon.map(({ entry, band, primaryTag }) => (
+          <div
+            key={entry.id}
+            title={`${entry.taskSnapshot.text} · ${formatMinutesOfDay(band.startMinutes)} – ${formatMinutesOfDay(band.endMinutes)}`}
+            className={cn(
+              'pointer-events-auto absolute overflow-hidden rounded-sm',
+              entry.endedAt === null && 'animate-pulse',
+            )}
+            style={{
+              left: band.startMinutes * pxPerMinute,
+              width: Math.max((band.endMinutes - band.startMinutes) * pxPerMinute, 2),
+              top: ribbonTop,
+              height: RIBBON_H,
+              backgroundColor: categoryFill(primaryTag, trackedTagIds),
+              opacity: primaryTag === null ? 0.45 : 0.85,
+            }}
+          >
+            <span className="px-1.5 text-[10px] leading-[26px] whitespace-nowrap text-white mix-blend-luminosity">
+              {entry.taskSnapshot.text}
+            </span>
+          </div>
+        ))}
 
         {laned.map((l) => (
           <TimelineBlock
@@ -271,8 +317,8 @@ function TimelineBlock({
   onOpenDetail: (task: Task) => void
 }) {
   const { entry, lane } = laned
-  const startPomodoro = usePomodoroStore((s) => s.startSession)
-  const pomodoroStatus = usePomodoroStore((s) => s.run.status)
+  const startTracking = useTimeEntryStore((s) => s.start)
+  const isTracked = useTimeEntryStore((s) => openEntryOf(s.entries)?.taskId === entry.taskId)
   const resizeOriginRef = React.useRef<{ x: number; startMinutes: number; durationMinutes: number } | null>(null)
 
   // Live task first, the entry's own snapshot second. That fallback is the
@@ -383,14 +429,14 @@ function TimelineBlock({
             <Clock className="size-4" />
           </button>
         )}
-        {task && pomodoroStatus === 'idle' && (
+        {task && !isTracked && (
           <button
             type="button"
-            aria-label={`Start focus session on ${text}`}
-            title="Start focus session"
-            // Pinned: picking a specific block's timer is an explicit choice,
-            // so it shouldn't be re-derived from the timeline next phase.
-            onClick={() => startPomodoro([{ id: task.id, text: task.text, tagIds: task.tags }], true)}
+            aria-label={`Start tracking ${text}`}
+            title="Start tracking this task"
+            // No longer gated on the timer being idle: switching what you're
+            // working on is one click, with or without a pomodoro running.
+            onClick={() => startTracking(taskRefOf(task))}
             className="hidden shrink-0 rounded p-1 text-muted-foreground transition-colors group-hover:block hover:bg-background hover:text-primary"
           >
             <Timer className="size-4" />

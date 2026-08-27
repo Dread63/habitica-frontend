@@ -6,6 +6,8 @@ import { emojify } from '@/lib/emoji'
 import { useTwemoji } from '@/lib/useTwemoji'
 import { remainingMs } from './pomodoroEngine'
 import { usePomodoroStore } from './pomodoroStore'
+import { openEntryOf } from '@/features/tracking/timeEntries'
+import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
 import { alertPhaseComplete } from './pomodoroNotify'
 import { PomodoroDialog } from './PomodoroDialog'
 
@@ -77,10 +79,14 @@ export function PomodoroStatusPill() {
 
   const isActive = run.status !== 'idle'
   const isAwaiting = run.status === 'awaiting'
-  // "First task +N" — the pill is glanceable, the full list lives in the panel.
-  const taskSummary =
-    run.tasks.length > 0 ? `${run.tasks[0].text}${run.tasks.length > 1 ? ` +${run.tasks.length - 1}` : ''}` : null
+  // The pointer, not the timer, answers "what am I on" — so this stays
+  // accurate while tracking outside a pomodoro, a state that could not
+  // previously exist.
+  const openEntry = useTimeEntryStore((s) => openEntryOf(s.entries))
+  const taskSummary = openEntry?.taskSnapshot.text ?? null
   const taskRef = useTwemoji<HTMLSpanElement>([taskSummary])
+  // Tracking with no timer running: worth showing, but quietly.
+  const trackingOnly = !isActive && openEntry !== undefined
 
   return (
     <>
@@ -98,7 +104,9 @@ export function PomodoroStatusPill() {
           'flex h-8 items-center gap-1.5 rounded-full px-3 text-sm font-medium transition-colors',
           isAwaiting
             ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-            : isActive
+            : trackingOnly
+              ? 'bg-primary/10 text-primary hover:bg-primary/20'
+              : isActive
               ? run.phase === 'work'
                 ? 'bg-primary/15 text-primary hover:bg-primary/25'
                 : 'bg-muted text-foreground hover:bg-muted/80'
@@ -120,6 +128,10 @@ export function PomodoroStatusPill() {
               </span>
             )}
           </>
+        ) : trackingOnly ? (
+          <span ref={taskRef} className="hidden max-w-36 truncate text-xs sm:inline">
+            {emojify(taskSummary ?? '')}
+          </span>
         ) : (
           <span className="hidden sm:inline">Pomodoro</span>
         )}

@@ -6,6 +6,8 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { downloadExport } from '@/lib/sync/syncClient'
 import { useFocusSyncStore, type SyncStatus } from '@/lib/sync/focusSyncStore'
 import { usePomodoroStore } from './pomodoroStore'
+import { completedPomodoros } from './pomodoroPhases'
+import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
 import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
 
 const STATUS_COPY: Record<SyncStatus, { label: string; detail: string }> = {
@@ -42,8 +44,9 @@ function relativeTime(ms: number): string {
 export function PomodoroDataPanel() {
   const { credentials } = useAuth()
   const { status, lastSyncedAt, lastError } = useFocusSyncStore()
-  const sessionCount = usePomodoroStore((s) => s.history.length)
-  const entryCount = useTimelineEntryStore((s) => s.entries.length)
+  const entryCount = useTimeEntryStore((s) => s.entries.length)
+  const pomodoroCount = usePomodoroStore((s) => completedPomodoros(s.phases).length)
+  const placementCount = useTimelineEntryStore((s) => s.entries.length)
   const [busy, setBusy] = React.useState<'csv' | 'json' | null>(null)
   const [failure, setFailure] = React.useState<string | null>(null)
 
@@ -87,13 +90,17 @@ export function PomodoroDataPanel() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 text-center">
-        <div className="rounded-lg border border-border p-3">
-          <p className="text-xl font-semibold">{sessionCount}</p>
-          <p className="text-xs text-muted-foreground">Focus sessions recorded</p>
-        </div>
+      <div className="grid grid-cols-3 gap-3 text-center">
         <div className="rounded-lg border border-border p-3">
           <p className="text-xl font-semibold">{entryCount}</p>
+          <p className="text-xs text-muted-foreground">Tracked intervals</p>
+        </div>
+        <div className="rounded-lg border border-border p-3">
+          <p className="text-xl font-semibold">{pomodoroCount}</p>
+          <p className="text-xs text-muted-foreground">Pomodoros completed</p>
+        </div>
+        <div className="rounded-lg border border-border p-3">
+          <p className="text-xl font-semibold">{placementCount}</p>
           <p className="text-xs text-muted-foreground">Timeline placements</p>
         </div>
       </div>
@@ -101,8 +108,8 @@ export function PomodoroDataPanel() {
       <div className="flex flex-col gap-2 border-t border-border pt-3">
         <span className="text-xs font-medium text-muted-foreground">Export your focus log</span>
         <p className="text-xs text-muted-foreground">
-          The CSV is one row per task per session — start and end times, minutes, task, and categories — so
-          summing the minutes column by category or by task gives real totals. It opens in any spreadsheet and
+          The CSV is one row per tracked interval — real start and end times, minutes, task, and categories — so
+          summing the minutes column by category or by task gives exact totals. It opens in any spreadsheet and
           doesn't depend on this app still existing. The JSON is a complete backup that can be restored here.
         </p>
         <div className="flex flex-wrap items-center gap-2">

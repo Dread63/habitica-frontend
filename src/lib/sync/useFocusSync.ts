@@ -3,7 +3,8 @@ import { useAuth } from '@/features/auth/AuthProvider'
 import { useTags } from '@/features/tasks/useTags'
 import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
 import { usePomodoroStore } from '@/features/pomodoro/pomodoroStore'
-import { buildPushPayload, mergeSessions, mergeSettings, mergeTimeline } from './mergeState'
+import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
+import { buildPushPayload, mergePhases, mergeSettings, mergeTimeEntries, mergeTimeline } from './mergeState'
 import { pushAndPull, probeSync, type SyncedSettingsPayload } from './syncClient'
 import { useFocusSyncStore } from './focusSyncStore'
 
@@ -77,6 +78,7 @@ export function useFocusSync(): void {
     // field, pushing constantly for no reason.
     let timeline = useTimelineEntryStore.getState()
     let pomodoro = usePomodoroStore.getState()
+    let ledger = useTimeEntryStore.getState()
 
     const unsubscribeTimeline = useTimelineEntryStore.subscribe((state) => {
       const changed = state.entries !== timeline.entries || state.tombstones !== timeline.tombstones
@@ -85,13 +87,21 @@ export function useFocusSync(): void {
     })
     const unsubscribePomodoro = usePomodoroStore.subscribe((state) => {
       const changed =
-        state.history !== pomodoro.history || state.settingsUpdatedAt !== pomodoro.settingsUpdatedAt
+        state.phases !== pomodoro.phases || state.settingsUpdatedAt !== pomodoro.settingsUpdatedAt
       pomodoro = state
+      if (changed && !applyingRef.current) markChanged()
+    })
+    // Forgetting this one is the silent failure mode of the whole sync layer:
+    // edits would simply never leave the device and nothing, anywhere, errors.
+    const unsubscribeLedger = useTimeEntryStore.subscribe((state) => {
+      const changed = state.entries !== ledger.entries || state.tombstones !== ledger.tombstones
+      ledger = state
       if (changed && !applyingRef.current) markChanged()
     })
     return () => {
       unsubscribeTimeline()
       unsubscribePomodoro()
+      unsubscribeLedger()
     }
   }, [isAuthenticated])
 
@@ -101,6 +111,7 @@ export function useFocusSync(): void {
     try {
       const timeline = useTimelineEntryStore.getState()
       const pomodoro = usePomodoroStore.getState()
+      const ledger = useTimeEntryStore.getState()
 
       const settingsPayload: SyncedSettingsPayload = {
         ...pomodoro.settings,
@@ -112,7 +123,8 @@ export function useFocusSync(): void {
         userId,
         buildPushPayload({
           timeline: { entries: timeline.entries, tombstones: timeline.tombstones },
-          sessions: pomodoro.history,
+          timeEntries: { entries: ledger.entries, tombstones: ledger.tombstones },
+          phases: pomodoro.phases,
           settings: { updatedAt: pomodoro.settingsUpdatedAt, payload: settingsPayload },
         }),
       )
@@ -121,6 +133,13 @@ export function useFocusSync(): void {
       // while the request was in flight must not be clobbered by the response
       // it wasn't part of. mergeTimeline applies the same last-write-wins
       // rule the server does, so the newer side survives either way.
+      //
+      // The `?? []` on each field is a version-skew guard, not defensive
+      // noise: a server still speaking the pre-ledger shape omits
+      // `timeEntries`/`phases` entirely, and iterating undefined would throw
+      // inside the merge and surface as a permanent, misleading "Offline".
+      // Treating a missing collection as empty means an older server costs
+      // you sync of that record type, not the whole app.
       applyingRef.current = true
       const freshTimeline = useTimelineEntryStore.getState()
       useTimelineEntryStore
@@ -128,9 +147,17 @@ export function useFocusSync(): void {
         .applySyncedState(
           mergeTimeline(
             { entries: freshTimeline.entries, tombstones: freshTimeline.tombstones },
-            response.timelineEntries,
+            response.timelineEntries ?? [],
           ),
         )
+
+      const freshLedger = useTimeEntryStore.getState()
+      freshLedger.applySyncedState(
+        mergeTimeEntries(
+          { entries: freshLedger.entries, tombstones: freshLedger.tombstones },
+          response.timeEntries ?? [],
+        ),
+      )
 
       const freshPomodoro = usePomodoroStore.getState()
       const mergedSettings = mergeSettings(
@@ -138,7 +165,7 @@ export function useFocusSync(): void {
         response.settings,
       )
       freshPomodoro.applySyncedState({
-        history: mergeSessions(freshPomodoro.history, response.sessions),
+        phases: mergePhases(freshPomodoro.phases, response.phases ?? []),
         // Strip the transport-only fields back off before they reach the
         // pomodoro settings shape, which knows nothing about tag names.
         settings: mergedSettings

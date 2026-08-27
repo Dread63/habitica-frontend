@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { toDateOnlyString } from '@/lib/dateOnly'
+import type { TaskType } from '@/lib/habitica/types'
 import { minutesFromDate } from '@/lib/timeOfDay'
 import { entriesForDate, focusCandidateEntries } from '@/features/timeline/timelineEntries'
 import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
@@ -9,23 +10,26 @@ import {
   closeSegments,
   defaultPomodoroSettings,
   IDLE_RUN_STATE,
-  segmentsMs,
   type CompletedPhase,
-  type FocusSegment,
   type PomodoroRunState,
   type PomodoroSettings,
-  type PomodoroTaskRef,
 } from './pomodoroEngine'
-import { buildSessionRecord, type PomodoroSessionRecord } from './pomodoroStats'
+import { createPhaseRecord, type PomodoroPhaseRecord } from './pomodoroPhases'
+import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
+import { openEntryOf, type TimeEntryTaskRef } from '@/features/tracking/timeEntries'
 
 interface PomodoroStoreState {
   settings: PomodoroSettings
   run: PomodoroRunState
-  history: PomodoroSessionRecord[]
+  /**
+   * The phase log — what the timer did, as opposed to where the time went
+   * (features/tracking). Append-only; nothing edits a phase record.
+   */
+  phases: PomodoroPhaseRecord[]
   /**
    * ms epoch of the last settings change — the conflict rule when two
    * devices both edited them (see lib/sync/mergeState.ts). Only `settings`
-   * and `history` sync; `run` is deliberately device-local, because a live
+   * and `phases` sync; `run` is deliberately device-local, because a live
    * countdown belongs to the machine you started it on and syncing it would
    * mean two devices fighting over one clock.
    */
@@ -36,25 +40,15 @@ interface PomodoroStore extends PomodoroStoreState {
   updateSettings: (patch: Partial<PomodoroSettings>) => void
   toggleTrackedTag: (tagId: string) => void
   /** Called when a tag is deleted — mirrors tagFilterStore.pruneTag (wired
-   * into useDeleteTag). Past session records keep their tag *snapshots*;
-   * aggregation is a live intersection, so no history cleanup is needed. */
+   * into useDeleteTag). Time entries keep their tag *snapshots*; category
+   * aggregation is a live intersection, so no ledger cleanup is needed. */
   pruneTrackedTag: (tagId: string) => void
   /**
-   * Starts a fresh cycle against zero, one, or several linked tasks.
-   * `pinned` records whether the user chose them (a specific task's timer
-   * button, an edited chip queue) or merely accepted the timeline's
-   * suggestion — an unpinned set is re-derived at every later focus phase.
+   * Starts a fresh focus cycle. Pass a task to point at, or omit it to let
+   * the store infer one (whatever is already tracked, else the timeline's
+   * suggestion). Null means the phase runs with nothing tracked.
    */
-  startSession: (tasks: PomodoroTaskRef[], pinned?: boolean) => void
-  /**
-   * Replace the linked set mid-session — a 25-minute block often covers more
-   * than one thing. Always *pins*: editing the chips is the user saying what
-   * this session is about, and that has to outlive the next phase boundary
-   * (which otherwise re-derives an unpinned set from the timeline). The
-   * linked set is also the attribution fallback for time the timeline
-   * doesn't cover — see focusAttribution.ts.
-   */
-  setSessionTasks: (tasks: PomodoroTaskRef[]) => void
+  startSession: (task?: TimeEntryTaskRef | null) => void
   pauseSession: () => void
   resumeSession: () => void
   /** Leaves the `awaiting` seam — starts the break (or the next focus block)
@@ -65,8 +59,8 @@ interface PomodoroStore extends PomodoroStoreState {
    * pomodoro purism; partially-elapsed breaks are just discarded. */
   stopSession: () => void
   /**
-   * Recomputes `run` against the real clock, logging a newly-completed work
-   * phase to history and returning it so the caller can chime/notify.
+   * Recomputes `run` against the real clock, appending a newly-completed
+   * phase to the phase log and returning it so the caller can chime/notify.
    * Called from PomodoroStatusPill (1s tick while running + visibilitychange
    * + mount) — the store itself never registers listeners or plays sounds,
    * matching this codebase's convention of effects living in components.
@@ -74,54 +68,102 @@ interface PomodoroStore extends PomodoroStoreState {
   advance: () => CompletedPhase | null
   /** Replace the synced half of the store from a server merge (lib/sync). */
   applySyncedState: (state: {
-    history: PomodoroSessionRecord[]
+    phases: PomodoroPhaseRecord[]
     settings: PomodoroSettings
     settingsUpdatedAt: number
   }) => void
 }
 
-/** < 1 min of focus isn't a session worth logging. */
-const MIN_LOGGED_MS = 60_000
-
 /**
- * The tasks a focus phase starting *now* should link to, read straight off
- * the timeline. Lives in the store rather than the panel because the panel is
- * mounted twice at once on the Timeline page (the rail and the dialog's Timer
- * tab), so an effect there would fire twice; the store is the single owner.
- * Identity comes from each entry's snapshot — the store has no query cache —
- * which `useTimelineSnapshotSync` keeps current.
+ * The task the timeline suggests for a focus phase starting *now* — whatever
+ * is scheduled over this moment, or the next upcoming block, minus anything
+ * already completed (`focusCandidateEntries`).
+ *
+ * Lives in the store rather than the panel because the panel is mounted twice
+ * at once on the Timeline page (the rail and the dialog's Timer tab), so an
+ * effect there would fire twice. Identity comes from each entry's snapshot —
+ * the store has no query cache — which `useTimelineSnapshotSync` keeps current.
  */
-export function autoLinkedTasks(now: Date, windowMinutes: number): PomodoroTaskRef[] {
+export function suggestedTaskRef(now: Date, windowMinutes: number): TimeEntryTaskRef | null {
   const dayEntries = entriesForDate(useTimelineEntryStore.getState().entries, toDateOnlyString(now))
-  const refs: PomodoroTaskRef[] = []
   for (const entry of focusCandidateEntries(dayEntries, minutesFromDate(now), windowMinutes)) {
     const snapshot = entry.taskSnapshot
-    if (!snapshot || refs.some((r) => r.id === entry.taskId)) continue
-    refs.push({ id: entry.taskId, text: snapshot.text, tagIds: snapshot.tagIds })
+    if (snapshot) return { id: entry.taskId, text: snapshot.text, type: snapshot.type, tagIds: snapshot.tagIds }
   }
-  return refs
+  return null
+}
+
+function refOf(entry: { taskId: string; taskSnapshot: { text: string; type: TaskType; tagIds: string[] } }): TimeEntryTaskRef {
+  return { id: entry.taskId, text: entry.taskSnapshot.text, type: entry.taskSnapshot.type, tagIds: entry.taskSnapshot.tagIds }
 }
 
 /**
- * Builds the history record for a finished work phase, splitting its minutes
- * across tasks by overlapping the phase's real running intervals against the
- * timeline *as it stands right now* — deliberately at phase end, not live,
- * because blocks get rearranged mid-session and the arrangement you finished
- * with is the one you meant.
+ * The task a focus phase should point at when the caller didn't name one, in
+ * order of confidence:
+ *
+ *  1. whatever is already being tracked — switching phases shouldn't change
+ *     what you're doing;
+ *  2. the last thing tracked *within this phase*, which is what makes
+ *     resuming from a pause continue the same work rather than guessing
+ *     afresh (a pause closes the entry, so there is nothing open to read);
+ *  3. the timeline's suggestion for right now.
+ *
+ * Null means the phase runs untracked and the panel says "Not tracking" —
+ * deliberately not a guess.
  */
-function logWorkPhase(
-  segments: FocusSegment[],
-  tasks: PomodoroTaskRef[],
-  durationMinutes: number,
-  completedNaturally: boolean,
-): PomodoroSessionRecord {
-  return buildSessionRecord({
-    segments,
-    tasks,
-    entries: useTimelineEntryStore.getState().entries,
-    durationMinutes,
-    completedNaturally,
-  })
+function inferPointerTask(now: Date, windowMinutes: number, phaseId?: string | null): TimeEntryTaskRef | null {
+  const entries = useTimeEntryStore.getState().entries
+  const open = openEntryOf(entries)
+  if (open) return refOf(open)
+
+  if (phaseId) {
+    const withinPhase = entries.filter((e) => e.phaseId === phaseId)
+    const last = withinPhase[withinPhase.length - 1]
+    if (last) return refOf(last)
+  }
+  return suggestedTaskRef(now, windowMinutes)
+}
+
+/**
+ * Opens a time entry for a focus phase. Called from the store rather than a
+ * component so it happens once per state transition — PomodoroPanel is
+ * mounted twice and StrictMode doubles effects again on top of that.
+ */
+function trackPhaseStart(task: TimeEntryTaskRef | null, phaseId: string): void {
+  if (task) useTimeEntryStore.getState().start(task, { source: 'pomodoro', phaseId })
+}
+
+/**
+ * Versions: v1 linked at most one task; v2 a list; v3 added per-task
+ * `attribution` and real `segments`; v4 `run.tasksPinned`; v5
+ * `settingsUpdatedAt`; **v6 replaces the whole session-history model with the
+ * time-entry ledger** (features/tracking) plus this phase log.
+ *
+ * **`settings.trackedTagIds` is the thing this function exists to protect.**
+ * That list is hand-curated and unrecoverable, and zustand silently discards
+ * stored state on a version bump when no `migrate` is supplied — it only
+ * console.errors. Everything else here could be defaulted; that list could not.
+ *
+ * Pre-v6 `history` is deliberately **discarded rather than converted**. Those
+ * records held per-task *totals* with no time coordinates, so there is
+ * genuinely nothing to reconstruct intervals from — a conversion could only
+ * invent timings and present them as recorded, which is precisely what the
+ * ledger exists to stop. A mid-flight run resets to idle for the same reason.
+ *
+ * Exported and named so the riskiest code in the feature is a plain unit test.
+ */
+export function migratePomodoroState(persisted: unknown, _version: number): PomodoroStoreState {
+  const p = (persisted ?? {}) as {
+    settings?: Partial<PomodoroSettings>
+    settingsUpdatedAt?: number
+    phases?: PomodoroPhaseRecord[]
+  }
+  return {
+    settings: { ...defaultPomodoroSettings(), ...p.settings },
+    settingsUpdatedAt: typeof p.settingsUpdatedAt === 'number' ? p.settingsUpdatedAt : 0,
+    run: IDLE_RUN_STATE,
+    phases: Array.isArray(p.phases) ? p.phases : [],
+  }
 }
 
 /**
@@ -135,7 +177,7 @@ export const usePomodoroStore = create<PomodoroStore>()(
     (set, get) => ({
       settings: defaultPomodoroSettings(),
       run: IDLE_RUN_STATE,
-      history: [],
+      phases: [],
       settingsUpdatedAt: 0,
 
       updateSettings: (patch) =>
@@ -158,96 +200,128 @@ export const usePomodoroStore = create<PomodoroStore>()(
           settingsUpdatedAt: Date.now(),
         })),
 
-      applySyncedState: ({ history, settings, settingsUpdatedAt }) =>
-        set({ history, settings, settingsUpdatedAt }),
+      applySyncedState: ({ phases, settings, settingsUpdatedAt }) =>
+        set({ phases, settings, settingsUpdatedAt }),
 
-      startSession: (tasks, pinned = false) => {
+      startSession: (task) => {
         if (get().run.status !== 'idle') return // one clock; stop the current session first
+        const now = new Date()
+        const phaseId = crypto.randomUUID()
         set({
           run: {
             ...IDLE_RUN_STATE,
             status: 'running',
             phase: 'work',
-            tasks,
-            tasksPinned: pinned,
-            runningStartedAt: new Date().toISOString(),
+            phaseId,
+            runningStartedAt: now.toISOString(),
           },
         })
+        trackPhaseStart(task === undefined ? inferPointerTask(now, get().settings.workMinutes) : task, phaseId)
       },
 
-      setSessionTasks: (tasks) =>
-        set((state) => {
-          if (state.run.status === 'idle') return state
-          return { run: { ...state.run, tasks, tasksPinned: true } }
-        }),
+      pauseSession: () => {
+        if (get().run.status !== 'running') return
+        set((state) => ({
+          run: {
+            ...state.run,
+            status: 'paused',
+            segments: closeSegments(state.run, new Date()),
+            runningStartedAt: null,
+          },
+        }))
+        // A paused clock is not time spent. Resuming opens a *new* entry
+        // rather than reopening this one, so the ledger shows two real
+        // intervals instead of one with an invisible hole in it.
+        useTimeEntryStore.getState().stop('user')
+      },
 
-      pauseSession: () =>
-        set((state) => {
-          if (state.run.status !== 'running') return state
-          return {
-            run: {
-              ...state.run,
-              status: 'paused',
-              segments: closeSegments(state.run, new Date()),
-              runningStartedAt: null,
-            },
-          }
-        }),
+      resumeSession: () => {
+        if (get().run.status !== 'paused') return
+        set((state) => ({
+          run: { ...state.run, status: 'running', runningStartedAt: new Date().toISOString() },
+        }))
+        const run = get().run
+        if (run.phaseId) {
+          trackPhaseStart(inferPointerTask(new Date(), get().settings.workMinutes, run.phaseId), run.phaseId)
+        }
+      },
 
-      resumeSession: () =>
-        set((state) => {
-          if (state.run.status !== 'paused') return state
-          return { run: { ...state.run, status: 'running', runningStartedAt: new Date().toISOString() } }
-        }),
+      startNextPhase: () => {
+        if (get().run.status !== 'awaiting') return
+        const now = new Date()
+        set((state) => ({
+          run: {
+            ...state.run,
+            status: 'running',
+            segments: [],
+            phaseId: crypto.randomUUID(),
+            runningStartedAt: now.toISOString(),
+          },
+        }))
 
-      startNextPhase: () =>
-        set((state) => {
-          if (state.run.status !== 'awaiting') return state
-          const now = new Date()
-          // Re-read the timeline when a *focus* phase begins. Without this the
-          // set picked when the session started stays linked for the rest of
-          // it — so finishing a task early, ticking it off, and scheduling its
-          // successor in the same slot left the next phase still pointing at
-          // the finished one. A hand-picked set is left alone.
-          const tasks =
-            state.run.phase === 'work' && !state.run.tasksPinned
-              ? autoLinkedTasks(now, state.settings.workMinutes)
-              : state.run.tasks
-          return {
-            run: {
-              ...state.run,
-              status: 'running',
-              tasks,
-              segments: [],
-              runningStartedAt: now.toISOString(),
-            },
-          }
-        }),
+        const run = get().run
+        if (run.phase === 'work' && run.phaseId) {
+          // Re-infer at every focus phase: whatever is already tracked wins,
+          // else the timeline's suggestion for right now. Without this, a task
+          // chosen at 9am stays pointed at all day — long after it was
+          // finished and its successor scheduled.
+          trackPhaseStart(inferPointerTask(now, get().settings.workMinutes), run.phaseId)
+        } else {
+          // A break starts: whatever was open closes here. Breaks never track
+          // time, which is what keeps "focus today" meaning focus.
+          useTimeEntryStore.getState().stop('phase')
+        }
+      },
 
-      stopSession: () =>
-        set((state) => {
-          if (state.run.status === 'idle') return state
-          const segments = closeSegments(state.run, new Date())
-          const elapsed = segmentsMs(segments)
-          const history =
-            state.run.phase === 'work' && state.run.status !== 'awaiting' && elapsed >= MIN_LOGGED_MS
-              ? [...state.history, logWorkPhase(segments, state.run.tasks, Math.round(elapsed / 60_000), false)]
-              : state.history
-          return { run: IDLE_RUN_STATE, history }
-        }),
+      stopSession: () => {
+        const before = get()
+        if (before.run.status === 'idle') return
+        const now = new Date()
+        const segments = closeSegments(before.run, now)
+        const isPartialWork = before.run.phase === 'work' && before.run.status !== 'awaiting'
+
+        set((state) => ({
+          run: IDLE_RUN_STATE,
+          phases:
+            isPartialWork && segments.length > 0
+              ? [
+                  ...state.phases,
+                  createPhaseRecord({
+                    phase: 'work',
+                    startedAt: segments[0].startedAt,
+                    endedAt: segments[segments.length - 1].endedAt,
+                    plannedMs: state.settings.workMinutes * 60_000,
+                    segments,
+                    completedNaturally: false,
+                  }, before.run.phaseId ?? undefined),
+                ]
+              : state.phases,
+        }))
+        useTimeEntryStore.getState().stop('user')
+      },
 
       advance: () => {
         const state = get()
         const { run, completed } = advancePhase(state.run, state.settings, new Date())
         if (completed === null) return null
-        const history =
-          completed.phase === 'work' // breaks aren't focus time
-            ? [
-                ...state.history,
-                logWorkPhase(completed.segments, state.run.tasks, completed.durationMinutes, true),
-              ]
-            : state.history
-        set({ run, history })
+        const phases = [
+          ...state.phases,
+          createPhaseRecord({
+            phase: completed.phase,
+            startedAt: completed.startedAt,
+            endedAt: completed.endedAt,
+            plannedMs: completed.durationMinutes * 60_000,
+            segments: completed.segments,
+            completedNaturally: true,
+          }, completed.id ?? undefined),
+        ]
+        set({ run, phases })
+        // The pointer deliberately keeps running past the bell: if you finish
+        // a thought after the phase ends, those minutes were still spent on
+        // the task. The phase record says 25 minutes and the entry may say 31
+        // — both true, and that disagreement is the point of separating them.
+        // It closes when a break starts, when you stop, or when the idle
+        // reconciliation prompt trims it.
         return completed
       },
     }),
@@ -257,76 +331,10 @@ export const usePomodoroStore = create<PomodoroStore>()(
       partialize: (state): PomodoroStoreState => ({
         settings: state.settings,
         run: state.run,
-        history: state.history,
+        phases: state.phases,
         settingsUpdatedAt: state.settingsUpdatedAt,
       }),
-      /**
-       * v1 linked at most one task (taskId + snapshots); v2 links a list; v3
-       * adds per-task `attribution` to records, replaces the run's
-       * `elapsedMsBeforeStart` scalar with real `segments`, and adds the
-       * sound/notification settings that manual phase advance needs; v4 adds
-       * `run.tasksPinned` (history untouched — the run resets anyway); v5
-       * adds `settingsUpdatedAt` for cross-device settings conflicts, seeded
-       * to 0 so a device that has actually synced always wins over a local
-       * copy that never has.
-       *
-       * History migrates without losing anything, but note what it can't
-       * reconstruct: pre-v3 records only know *which* tasks a session was
-       * linked to, never when each was worked on. The best unbiased estimate
-       * is an even split of the session's duration across its linked tasks,
-       * which is what's written — it conserves total time, and leaves the
-       * common one-task session's numbers exactly as they were. Multi-task
-       * sessions do shift: v2 credited every linked task the session's whole
-       * duration, so a 25-minute block linking a Work task and a School task
-       * reported 25 minutes of each. It now reports 12.5 of each. That's a
-       * correction, not a regression — the old figure was the double
-       * counting this whole rework exists to remove.
-       *
-       * A mid-flight run resets to idle rather than guessing at segment
-       * boundaries that were never recorded.
-       */
-      migrate: (persisted) => {
-        const p = persisted as {
-          settings?: Partial<PomodoroSettings>
-          settingsUpdatedAt?: number
-          run?: unknown
-          history?: (Partial<PomodoroSessionRecord> & {
-            taskId?: string | null
-            taskTextSnapshot?: string | null
-            taskTagIdsSnapshot?: string[]
-          })[]
-        }
-        const defaults = defaultPomodoroSettings()
-        return {
-          settings: { ...defaults, ...p.settings },
-          settingsUpdatedAt: typeof p.settingsUpdatedAt === 'number' ? p.settingsUpdatedAt : 0,
-          run: IDLE_RUN_STATE,
-          history: (p.history ?? []).map((r) => {
-            const tasks: PomodoroTaskRef[] = Array.isArray(r.tasks)
-              ? r.tasks
-              : r.taskId
-                ? [{ id: r.taskId, text: r.taskTextSnapshot ?? '', tagIds: r.taskTagIdsSnapshot ?? [] }]
-                : []
-            const durationMinutes = r.durationMinutes ?? 0
-            return {
-              id: r.id ?? crypto.randomUUID(),
-              tasks,
-              attribution:
-                r.attribution ??
-                tasks.map((t) => ({
-                  taskId: t.id,
-                  text: t.text,
-                  tagIds: t.tagIds,
-                  minutes: Math.round((durationMinutes / tasks.length) * 100) / 100,
-                })),
-              startedAt: r.startedAt ?? new Date().toISOString(),
-              endedAt: r.endedAt ?? new Date().toISOString(),
-              durationMinutes,
-              completedNaturally: r.completedNaturally ?? true,
-            }
-          }),
-        }
-      },
+      migrate: (persisted, version) => migratePomodoroState(persisted, version),
     },
   ),
 )

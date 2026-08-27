@@ -121,6 +121,7 @@ describe('advancePhase', () => {
     // 27 minutes in: work (25) finished 2 minutes ago.
     const { run: next, completed } = advancePhase(run, settings, at('2026-08-25T09:27:00.000Z'))
     expect(completed).toEqual({
+      id: null,
       phase: 'work',
       startedAt: '2026-08-25T09:00:00.000Z',
       endedAt: '2026-08-25T09:25:00.000Z',

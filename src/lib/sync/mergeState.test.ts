@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { TimelineEntry } from '@/features/timeline/timelineEntries'
-import type { PomodoroSessionRecord } from '@/features/pomodoro/pomodoroStats'
+import type { PomodoroPhaseRecord } from '@/features/pomodoro/pomodoroPhases'
+import type { TimeEntry } from '@/features/tracking/timeEntries'
 import {
   buildPushPayload,
-  mergeSessions,
+  mergePhases,
   mergeSettings,
+  mergeTimeEntries,
   mergeTimeline,
   type RemoteTimelineEntry,
 } from './mergeState'
@@ -102,42 +104,91 @@ describe('mergeTimeline', () => {
   })
 })
 
-describe('mergeSessions', () => {
-  const session = (id: string, startedAt: string, minutes = 25): PomodoroSessionRecord => ({
+const timeEntry = (id: string, updatedAt: number, overrides: Partial<TimeEntry> = {}): TimeEntry => ({
+  id,
+  taskId: `task-${id}`,
+  startedAt: '2026-08-27T09:00:00.000Z',
+  endedAt: '2026-08-27T09:25:00.000Z',
+  taskSnapshot: { text: `Task ${id}`, type: 'todo', tagIds: [] },
+  source: 'pomodoro',
+  createdAt: '2026-08-27T09:00:00.000Z',
+  updatedAt,
+  ...overrides,
+})
+
+const remoteEntry = (id: string, updatedAt: number, payload: TimeEntry | null) => ({
+  id,
+  updatedAt,
+  deleted: payload === null,
+  startedAt: payload?.startedAt ?? null,
+  payload,
+})
+
+describe('mergeTimeEntries', () => {
+  it('an edited entry pushed later wins over the original', () => {
+    // The exact thing INSERT OR IGNORE gets wrong: a corrected end time must
+    // replace the one recorded live, not be silently dropped.
+    const local = { entries: [timeEntry('e1', 100)], tombstones: {} }
+    const corrected = timeEntry('e1', 200, { endedAt: '2026-08-27T09:40:00.000Z' })
+    const result = mergeTimeEntries(local, [remoteEntry('e1', 200, corrected)])
+    expect(result.entries[0].endedAt).toBe('2026-08-27T09:40:00.000Z')
+  })
+
+  it('keeps the newer local edit when the server is behind', () => {
+    const local = { entries: [timeEntry('e1', 300, { taskId: 'reassigned' })], tombstones: {} }
+    const result = mergeTimeEntries(local, [remoteEntry('e1', 100, timeEntry('e1', 100))])
+    expect(result.entries[0].taskId).toBe('reassigned')
+  })
+
+  it('a deleted entry stays deleted when a stale device pushes its copy back', () => {
+    const local = { entries: [], tombstones: { e1: 200 } }
+    const result = mergeTimeEntries(local, [remoteEntry('e1', 100, timeEntry('e1', 100))])
+    expect(result.entries).toEqual([])
+    expect(result.tombstones.e1).toBe(200)
+  })
+
+  it('orders chronologically, unlike timeline placements', () => {
+    const result = mergeTimeEntries(
+      { entries: [timeEntry('late', 100, { startedAt: '2026-08-27T14:00:00.000Z' })], tombstones: {} },
+      [remoteEntry('early', 100, timeEntry('early', 100, { startedAt: '2026-08-27T08:00:00.000Z' }))],
+    )
+    expect(result.entries.map((e) => e.id)).toEqual(['early', 'late'])
+  })
+
+  it('is idempotent', () => {
+    const local = { entries: [timeEntry('e1', 100)], tombstones: { gone: 50 } }
+    const response = [remoteEntry('e1', 150, timeEntry('e1', 150)), remoteEntry('gone', 50, null)]
+    const once = mergeTimeEntries(local, response)
+    expect(mergeTimeEntries(once, response)).toEqual(once)
+  })
+})
+
+describe('mergePhases', () => {
+  const phase = (id: string, startedAt: string, plannedMs = 25 * 60_000): PomodoroPhaseRecord => ({
     id,
-    tasks: [],
-    attribution: [],
+    phase: 'work',
     startedAt,
     endedAt: startedAt,
-    durationMinutes: minutes,
+    plannedMs,
+    segments: [],
     completedNaturally: true,
   })
 
   it('unions both sides and orders chronologically', () => {
-    const result = mergeSessions(
-      [session('local', '2026-08-25T14:00:00.000Z')],
-      [{ id: 'remote', startedAt: '2026-08-25T09:00:00.000Z', payload: session('remote', '2026-08-25T09:00:00.000Z') }],
+    const result = mergePhases(
+      [phase('local', '2026-08-27T14:00:00.000Z')],
+      [{ id: 'remote', startedAt: '2026-08-27T09:00:00.000Z', payload: phase('remote', '2026-08-27T09:00:00.000Z') }],
     )
-    expect(result.map((s) => s.id)).toEqual(['remote', 'local'])
+    expect(result.map((p) => p.id)).toEqual(['remote', 'local'])
   })
 
-  it('never rewrites a session that already exists', () => {
-    // History is evidence; a later push must not be able to restate it.
-    const result = mergeSessions(
-      [session('s1', '2026-08-25T09:00:00.000Z', 25)],
-      [{ id: 's1', startedAt: '2026-08-25T09:00:00.000Z', payload: session('s1', '2026-08-25T09:00:00.000Z', 999) }],
+  it('never rewrites a phase that already exists — the timer having run is a fact', () => {
+    const result = mergePhases(
+      [phase('p1', '2026-08-27T09:00:00.000Z', 25 * 60_000)],
+      [{ id: 'p1', startedAt: '2026-08-27T09:00:00.000Z', payload: phase('p1', '2026-08-27T09:00:00.000Z', 999) }],
     )
     expect(result).toHaveLength(1)
-    expect(result[0].durationMinutes).toBe(25)
-  })
-
-  it('is idempotent', () => {
-    const local = [session('a', '2026-08-25T09:00:00.000Z')]
-    const incoming = [
-      { id: 'b', startedAt: '2026-08-25T10:00:00.000Z', payload: session('b', '2026-08-25T10:00:00.000Z') },
-    ]
-    const once = mergeSessions(local, incoming)
-    expect(mergeSessions(once, incoming)).toEqual(once)
+    expect(result[0].plannedMs).toBe(25 * 60_000)
   })
 })
 
@@ -155,7 +206,8 @@ describe('buildPushPayload', () => {
   it('sends live entries and tombstones together', () => {
     const payload = buildPushPayload({
       timeline: { entries: [entry('live', 100)], tombstones: { gone: 200 } },
-      sessions: [],
+      timeEntries: { entries: [], tombstones: {} },
+      phases: [],
       settings: null,
     })
     expect(payload.timelineEntries).toEqual([
@@ -168,7 +220,40 @@ describe('buildPushPayload', () => {
     // A device syncing against a server that already agrees with it must not
     // see its own state come back altered.
     const local = { entries: [entry('e1', 100)], tombstones: { e2: 200 } }
-    const pushed = buildPushPayload({ timeline: local, sessions: [], settings: null })
+    const pushed = buildPushPayload({
+      timeline: local,
+      timeEntries: { entries: [], tombstones: {} },
+      phases: [],
+      settings: null,
+    })
     expect(mergeTimeline(local, pushed.timelineEntries)).toEqual(local)
+  })
+})
+
+describe('buildPushPayload — open entries stay device-local', () => {
+  it('excludes the open entry but sends the closed ones', () => {
+    // A foreign open entry would show "working on X" from another machine and
+    // break that device's own one-open-entry invariant on merge.
+    const payload = buildPushPayload({
+      timeline: { entries: [], tombstones: {} },
+      timeEntries: {
+        entries: [timeEntry('closed', 100), timeEntry('open', 200, { endedAt: null })],
+        tombstones: { removed: 300 },
+      },
+      phases: [],
+      settings: null,
+    })
+    expect(payload.timeEntries.map((e) => e.id)).toEqual(['closed', 'removed'])
+  })
+
+  it('an open entry survives a sync round-trip that knows nothing about it', () => {
+    const local = { entries: [timeEntry('open', 200, { endedAt: null })], tombstones: {} }
+    const pushed = buildPushPayload({
+      timeline: { entries: [], tombstones: {} },
+      timeEntries: local,
+      phases: [],
+      settings: null,
+    })
+    expect(mergeTimeEntries(local, pushed.timeEntries).entries.map((e) => e.id)).toEqual(['open'])
   })
 })
