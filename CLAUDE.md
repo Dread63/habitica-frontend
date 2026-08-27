@@ -17,6 +17,7 @@ only need the one that covers what you're touching.
 
 | If you're touching… | Read first |
 |---|---|
+| Running the app locally at all | `docs/development.md` — the api service means `npm run dev` alone is only half the stack |
 | Anything calling the Habitica API | `docs/habitica-api.md` — endpoints, data shapes, **§ Footguns** |
 | Due dates, scheduling, anything with a calendar date | `docs/gotchas.md` § Dates — **the most expensive bug in this repo lives here** |
 | `features/tracking`, `features/timeline`, `features/pomodoro` | `docs/time-tracking.md` — the three-records model |
@@ -64,13 +65,16 @@ These are in this always-loaded file because getting one wrong breaks the app or
 ## Commands
 
 ```bash
-npm run dev                  # vite dev server
-npm run typecheck            # tsc -b --noEmit
-npm run lint                 # oxlint
-npm test                     # vitest run  — 384 tests, 24 files
-npm run build                # tsc -b && vite build
+npm run dev                  # vite dev server (:5173) — frontend only; /api/ 503s, sync off
+npm run dev:api              # api service (:8081), db at ./.local-data/ — run alongside dev
+npm run verify               # typecheck && lint && test && build — the gate
+npm test                     # vitest run — covers frontend AND api in one pass
 docker compose up --build    # full stack: web (nginx) + api (node:sqlite)
 ```
+
+`npm run dev` on its own is a supported setup — localStorage is the working copy and sync only
+mirrors it. Run `dev:api` too when touching sync, export, or persistence.
+**Details and traps: `docs/development.md`.**
 
 **Run `typecheck && lint && test && build` before claiming anything is done**, then state
 explicitly what you did *not* verify. No browser automation has ever been available in this

@@ -33,6 +33,7 @@ starting it.
 
 - `CLAUDE.md` — the standing brief for coding agents: non-negotiables + a routing table
   pointing at the doc that covers whatever you're touching (start here)
+- `docs/development.md` — running it locally: the dev server, the api service, the SQLite db
 - `docs/gotchas.md` — **every trap, indexed by area.** Each entry is a bug already paid for
 - `docs/architecture.md` — decided calls and why; what's left to build
 - `docs/time-tracking.md` — the three-records model (plan / ledger / phase log)
@@ -50,8 +51,21 @@ starting it.
 
 ```sh
 npm install
-npm run dev            # no configuration needed — see the note below
+npm run dev            # frontend only, :5173 — no configuration needed
 ```
+
+That's enough for most work: localStorage is the working copy, so the app runs fully without
+the sync service (it just reports sync unavailable).
+
+When you're changing sync, export, or timeline/pomodoro persistence, run the api too — Node ≥ 24,
+no install step, database at `./.local-data/`:
+
+```sh
+npm run dev:api        # terminal 1 — :8081
+npm run dev            # terminal 2 — :5173, proxies /api → :8081
+```
+
+**Full guide, including how `/api/` resolves in dev vs production: [docs/development.md](docs/development.md).**
 
 ## Install with Docker
 

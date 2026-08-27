@@ -44,7 +44,9 @@ Before claiming anything is done:
 npm run typecheck && npm run lint && npm test && npm run build
 ```
 
-Currently 384 tests across 24 files, all passing.
+This runs the frontend and `api/` suites together — `npm test` alone already covers both.
+(Deliberately not quoting a test count here: it goes stale on the next commit and then
+quietly misinforms. `npm test` prints the real number.)
 
 **Then say what you did not verify.** Every round in `docs/history/` ends with an explicit "not
 verified" list, and that convention is load-bearing — it's how the Docker healthcheck bug and

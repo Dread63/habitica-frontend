@@ -233,7 +233,7 @@ that is self-consistent within this app's own round-trip can still be wrong — 
 how the timezone bug shipped the first time. Check it on habitica.com.
 
 **Run `npm run typecheck && npm run lint && npm test && npm run build` before claiming
-anything is done.** 384 tests across 24 files; this suite has been the actual correctness net
+anything is done.** The suite covers frontend and api together and has been the correctness net
 for the whole project.
 
 **Say what you did NOT verify.** Every round in `docs/history/` ends with an explicit "not
