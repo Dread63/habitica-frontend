@@ -299,7 +299,7 @@ export function TaskCard({ task, tagNamesById }: TaskCardProps) {
         <SchedulePopover
           x={schedulePopover.x}
           y={schedulePopover.y}
-          task={task}
+          subject={task}
           onClose={() => setSchedulePopover(null)}
         />
       )}

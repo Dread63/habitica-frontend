@@ -32,7 +32,9 @@ import type { Task, TaskType } from '@/lib/habitica/types'
  */
 export interface TimelineTaskSnapshot {
   text: string
-  type: TaskType
+  /** Absent for an ad-hoc activity, which has no Habitica task type — the
+   * block then draws with the neutral accent (TimelineBlock). */
+  type?: TaskType
   tagIds: string[]
   /**
    * Whether the task was done the last time this app saw it. Blocks for

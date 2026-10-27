@@ -19,6 +19,9 @@ current interval first, so at most one entry is open and no minute has two owner
 attribution step and **no even-splitting anywhere**. If a number looks wrong, the fix is to
 correct the entry that produced it.
 
+**What a record points at is a *subject*, not necessarily a task.** Both `taskId` fields hold
+either a Habitica task id or `activity:<normalised label>` — see § Activities below.
+
 **The plan is never evidence.** Editing a timeline block cannot change a recorded minute. That
 was the whole bug.
 
@@ -122,10 +125,71 @@ intervals so touching blocks aren't overlapping, deterministic regardless of inp
 provably lane-optimal (a chain A↔B↔C needs 2 lanes, not 3).
 → `timelineLanes.ts`
 
-## Plan vs actual
+## The Actual ribbon
 
-An "Actual" ribbon renders under the planned lanes, plus an adherence percentage. One lane
-suffices because recorded intervals never overlap — the unbroken band *is* the proof.
+An "Actual" ribbon renders under the planned lanes: one lane, because recorded intervals never
+overlap and the unbroken band *is* the proof that every minute has exactly one owner. It is read
+straight from the ledger, never derived from the blocks above it, and the gaps between bands are
+honest untracked time.
 
-The boundary-sweep code from the deleted attribution system survives here, repurposed as a
-*comparison* rather than an *inference*. That distinction is the whole point of the rebuild.
+**The ribbon is interactive, and it is the primary repair surface.** Clicking a band opens
+`TimeEntryEditor` on that interval; clicking a gap opens it in `insert` mode prefilled with the
+gap's span. On today, gaps are only offered up to *now* — inviting a click on 9pm at lunchtime
+would be inviting a log of the future.
+
+### Planned-vs-tracked was removed, on purpose
+
+`comparePlanToActual` and the adherence percentage are **gone** (2026-09-02), along with
+`planVsActual.ts` itself; its surviving `timeEntryToDayBand` moved into `timeEntries.ts` beside
+`clipToDay`. Don't rebuild it without a new reason.
+
+The number measured the wrong thing. Finishing something faster than you blocked out for it is
+usually a *good* outcome, and "78% adherence" reported it as a shortfall. A version that only
+counted time saved on tasks whose tracking ended *because the task was completed* was considered
+and deliberately not built — it needs a `closedBy: 'completed'` that does not exist (completing a
+task currently routes through `handleTaskDeleted` and lands as `'user'`, same as a manual stop),
+and it was not wanted enough to earn that.
+
+## Activities
+
+An **activity** is a subject that isn't a Habitica task. It exists because pausing a focus session
+to be IT support for forty minutes left the ledger with only two bad options: an overlong entry on
+the wrong task, or an untracked gap.
+
+- Stored as `activity:<normalised label>` **in the existing `taskId` field**. Everything that
+  treats that field as an opaque grouping key was untouched; everything that resolves it to a live
+  `Task` already had a snapshot fallback, because completing a to-do drops it from
+  `GET /tasks/user`. **No persisted field changed shape, so neither store needed a version bump.**
+- The id is derived from the label, so the same name is the same subject forever — which is what
+  makes activities group correctly in the category charts with no new aggregation code.
+  Consequence: **you cannot rename one.**
+- **No activity store.** `recentActivities()` derives the list from the ledger and the plan; label
+  and tags come from the most recent sighting, so re-tagging is just using it again.
+- Activities carry `tagIds` like tasks, so the `--cat-N` colour slots and every category readout
+  treat them identically. An untagged activity is "Uncategorised", same as an untagged task.
+- `taskSnapshot.type` is now optional — an activity has no Habitica task type, and its block draws
+  with the neutral accent.
+
+## Backfilling: `insertEntry`
+
+`insertEntry(state, {subject, startedAt, endedAt}, now, ids?)` records a subject over a span,
+carving room out of whatever already occupies it. It replaces a four-operation repair
+(split → split → retarget → correct two end times) that was easy to get wrong in a way that
+silently invented or destroyed minutes.
+
+| head kept | tail kept | result |
+|---|---|---|
+| yes | yes | split — head keeps the id, tail becomes a new record with `splitFromId` |
+| yes | no | the entry keeps its id and ends earlier |
+| no | yes | the entry keeps its id and starts later |
+| no | no | deleted, with a tombstone |
+
+An exact span match is a **retarget in place**, so the id and the audit trail survive. A remnant
+under `MIN_ENTRY_MS` is dropped rather than recorded. The open entry is carved like any other,
+measured to `now`, and the piece still running to `now` stays open — so the at-most-one-open-entry
+invariant holds. The postcondition is `findOverlaps(result, now) === []` with total duration
+conserved, and the tests assert both.
+
+New entries get `source: 'backfill'`, distinct from `'manual'`. Both are hand-started, but
+`'manual'` was recorded **live** and `'backfill'` was typed in afterwards — a materially weaker
+claim, and the CSV export carries the distinction out.

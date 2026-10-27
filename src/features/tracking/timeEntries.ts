@@ -1,6 +1,7 @@
 import { randomId } from '@/lib/randomId'
 import { addDays, parseDateOnlyString, toDateOnlyString } from '@/lib/dateOnly'
 import type { Task, TaskType } from '@/lib/habitica/types'
+import type { TimeSubject } from '@/features/activities/subject'
 
 /**
  * The time ledger: what was actually worked on, when.
@@ -27,14 +28,16 @@ import type { Task, TaskType } from '@/lib/habitica/types'
  * and leave two devices permanently divergent with no error anywhere.
  */
 
-/** What the pointer points at. Replaces the old PomodoroTaskRef — the timer
- * no longer owns task identity, the ledger does. */
-export interface TimeEntryTaskRef {
-  id: string
-  text: string
-  type: TaskType
-  tagIds: string[]
-}
+/**
+ * What the pointer points at.
+ *
+ * This is now `TimeSubject` (features/activities/subject.ts), which is a
+ * Habitica task **or** an ad-hoc activity. It used to be a `TimeEntryTaskRef`
+ * declared here; the two were structurally identical, and one concept is
+ * better than two. The alias is kept so the ~6 existing call sites and their
+ * tests still read naturally.
+ */
+export type TimeEntryTaskRef = TimeSubject
 
 /**
  * Frozen at open. A strict subset of TimelineTaskSnapshot — deliberately no
@@ -43,11 +46,23 @@ export interface TimeEntryTaskRef {
  */
 export interface TimeEntryTaskSnapshot {
   text: string
-  type: TaskType
+  /** Absent for an ad-hoc activity, which has no Habitica task type. Every
+   * reader already had to cope with a missing type for an entry whose task was
+   * deleted upstream, so this widens a path rather than adding one. */
+  type?: TaskType
   tagIds: string[]
 }
 
-export type TimeEntrySource = 'manual' | 'pomodoro'
+/**
+ * How the interval came to exist.
+ *
+ * `manual` and `pomodoro` were both recorded **live** — a pointer running while
+ * the minutes elapsed. `backfill` was typed in afterwards for time that was
+ * never tracked as it happened. That is a materially weaker claim, so it gets
+ * its own value rather than being folded into `manual`, and the CSV export
+ * carries it out unchanged.
+ */
+export type TimeEntrySource = 'manual' | 'pomodoro' | 'backfill'
 
 /**
  * Why an interval ended. Distinct from `audit` on purpose: an end time
@@ -114,6 +129,11 @@ export function timeEntrySnapshotOf(task: Task): TimeEntryTaskSnapshot {
 
 export function taskRefOf(task: Task): TimeEntryTaskRef {
   return { id: task.id, text: task.text, type: task.type, tagIds: task.tags }
+}
+
+/** The snapshot to freeze onto an entry for a subject — a task or an activity. */
+export function snapshotOfSubject(subject: TimeSubject): TimeEntryTaskSnapshot {
+  return { text: subject.text, type: subject.type, tagIds: subject.tagIds }
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +285,29 @@ export interface TimeEntryEdit {
  * point of the audit trail is that it records what was captured live, not
  * what it was most recently changed from.
  */
+/**
+ * One entry with an edit applied and the audit rule enforced. Extracted so
+ * `editEntry` and `insertEntry` cannot drift on the one thing that makes the
+ * log trustworthy: `audit.original` is written on the FIRST edit and never
+ * again.
+ */
+function withEdit(entry: TimeEntry, edit: TimeEntryEdit, now: Date): TimeEntry {
+  return {
+    ...entry,
+    ...edit,
+    audit: {
+      original: entry.audit?.original ?? {
+        taskId: entry.taskId,
+        startedAt: entry.startedAt,
+        endedAt: entry.endedAt,
+      },
+      editedAt: now.toISOString(),
+      editCount: (entry.audit?.editCount ?? 0) + 1,
+    },
+    updatedAt: now.getTime(),
+  }
+}
+
 export function editEntry(
   state: TimeEntryState,
   entryId: string,
@@ -273,23 +316,7 @@ export function editEntry(
 ): TimeEntryState {
   return {
     ...state,
-    entries: state.entries.map((entry) => {
-      if (entry.id !== entryId) return entry
-      return {
-        ...entry,
-        ...edit,
-        audit: {
-          original: entry.audit?.original ?? {
-            taskId: entry.taskId,
-            startedAt: entry.startedAt,
-            endedAt: entry.endedAt,
-          },
-          editedAt: now.toISOString(),
-          editCount: (entry.audit?.editCount ?? 0) + 1,
-        },
-        updatedAt: now.getTime(),
-      }
-    }),
+    entries: state.entries.map((entry) => (entry.id === entryId ? withEdit(entry, edit, now) : entry)),
   }
 }
 
@@ -331,6 +358,139 @@ export function splitEntry(
       second,
     ],
   }
+}
+
+/**
+ * Record `subject` over `[startedAt, endedAt)`, carving room out of whatever
+ * already occupies that span.
+ *
+ * This is the "sit back down and fix the log" primitive. You were tracking the
+ * report, you got pulled away to be IT support for forty minutes, and the
+ * ledger says two solid hours on the report. Before this existed the repair was
+ * split → split → retarget the middle → correct two end times, four operations
+ * deep in a dialog, and easy to get wrong in a way that silently invented or
+ * destroyed minutes.
+ *
+ * **Every other minute is conserved exactly.** The postcondition is
+ * `findOverlaps(result, now) === []` with the total duration unchanged apart
+ * from the inserted span and any sub-`MIN_ENTRY_MS` remnant, and the tests
+ * assert both.
+ *
+ * What happens to an overlapped entry, by how much of it survives:
+ *
+ * | head kept | tail kept | result |
+ * |---|---|---|
+ * | yes | yes | split — the head keeps the entry's id, the tail becomes a new record with `splitFromId` |
+ * | yes | no  | the entry keeps its id and ends earlier |
+ * | no  | yes | the entry keeps its id and starts later |
+ * | no  | no  | deleted, with a tombstone |
+ *
+ * A remnant shorter than `MIN_ENTRY_MS` is dropped rather than recorded, on
+ * the same reasoning as `stopTracking`: a three-second interval is noise, not
+ * evidence. Trims go through `withEdit`, so a corrected neighbour still reports
+ * what was captured live.
+ *
+ * **The open entry is carved like any other**, measured to `now`, and the piece
+ * that still runs to `now` stays open — so the at-most-one-open-entry invariant
+ * holds. If the insert covers the open entry entirely, nothing is left open,
+ * which is the honest outcome: you have just said you were doing something else.
+ *
+ * `ids` is injectable for deterministic tests, the same pattern as
+ * `splitEntry`'s `newId`.
+ */
+export function insertEntry(
+  state: TimeEntryState,
+  params: { subject: TimeSubject; startedAt: string; endedAt: string },
+  now: Date,
+  ids: string[] = [],
+): TimeEntryState {
+  const startMs = Date.parse(params.startedAt)
+  const endMs = Date.parse(params.endedAt)
+  // Refuse rather than guess: an unparseable or backwards span, or one too
+  // short to be worth recording at all.
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return state
+  if (endMs - startMs < MIN_ENTRY_MS) return state
+
+  let minted = 0
+  const mint = () => ids[minted++] ?? randomId()
+
+  const entries: TimeEntry[] = []
+  const tombstones = { ...state.tombstones }
+  let retargetedInPlace = false
+
+  for (const entry of state.entries) {
+    const eStart = Date.parse(entry.startedAt)
+    const eEnd = entryEndMs(entry, now)
+
+    // Half-open intervals, so a block that merely touches the insert is not
+    // overlapped by it — the same convention timelineLanes.ts uses.
+    if (eEnd <= startMs || eStart >= endMs) {
+      entries.push(entry)
+      continue
+    }
+
+    // An exact match is a retarget, not a demolition: keeping the record means
+    // keeping its id and its audit trail, which is the more honest edit.
+    if (eStart === startMs && eEnd === endMs) {
+      entries.push(
+        withEdit(
+          entry,
+          { taskId: params.subject.id, taskSnapshot: snapshotOfSubject(params.subject) },
+          now,
+        ),
+      )
+      retargetedInPlace = true
+      continue
+    }
+
+    const keepHead = startMs - eStart >= MIN_ENTRY_MS
+    const keepTail = eEnd - endMs >= MIN_ENTRY_MS
+
+    if (!keepHead && !keepTail) {
+      tombstones[entry.id] = now.getTime()
+      continue
+    }
+
+    if (keepHead) {
+      entries.push(withEdit(entry, { endedAt: new Date(startMs).toISOString() }, now))
+    }
+    if (keepTail) {
+      const tailStart = new Date(endMs).toISOString()
+      if (keepHead) {
+        // A genuine split. Mirrors splitEntry: the second half is a new record
+        // pointing back at the one it came from, and inherits its openness.
+        entries.push({
+          ...entry,
+          id: mint(),
+          startedAt: tailStart,
+          endedAt: entry.endedAt,
+          splitFromId: entry.id,
+          createdAt: now.toISOString(),
+          updatedAt: now.getTime(),
+        })
+      } else {
+        // Nothing survived in front of the insert, so the entry simply starts
+        // later and keeps its identity.
+        entries.push(withEdit(entry, { startedAt: tailStart }, now))
+      }
+    }
+  }
+
+  if (!retargetedInPlace) {
+    entries.push({
+      id: mint(),
+      taskId: params.subject.id,
+      startedAt: new Date(startMs).toISOString(),
+      endedAt: new Date(endMs).toISOString(),
+      taskSnapshot: snapshotOfSubject(params.subject),
+      source: 'backfill',
+      closedBy: 'user',
+      createdAt: now.toISOString(),
+      updatedAt: now.getTime(),
+    })
+  }
+
+  return { entries, tombstones }
 }
 
 export function deleteEntry(state: TimeEntryState, entryId: string, now: Date): TimeEntryState {
@@ -400,6 +560,31 @@ export function clipToDay(entry: TimeEntry, date: string, now: Date): TimeEntry 
     startedAt: new Date(startMs).toISOString(),
     // An open entry stays open only if the clip didn't move its end.
     endedAt: entry.endedAt === null && endMs === entryEndMs(entry, now) ? null : new Date(endMs).toISOString(),
+  }
+}
+
+/**
+ * Minutes-since-midnight band for drawing an entry on the day scrubber — the
+ * bridge from the ledger's absolute instants into the timeline's
+ * (date, minutes-since-midnight) coordinates.
+ *
+ * Moved here from the deleted `planVsActual.ts`. It was never really part of
+ * that comparison: it is a projection of a single TimeEntry onto a day, which
+ * is what `clipToDay` and `dayBounds` above already are.
+ */
+export function timeEntryToDayBand(
+  entry: TimeEntry,
+  date: string,
+  now: Date,
+): { startMinutes: number; endMinutes: number } | null {
+  const bounds = dayBounds(date)
+  if (!bounds) return null
+  const start = Math.max(Date.parse(entry.startedAt), bounds.start)
+  const end = Math.min(entryEndMs(entry, now), bounds.end)
+  if (end <= start) return null
+  return {
+    startMinutes: (start - bounds.start) / 60_000,
+    endMinutes: (end - bounds.start) / 60_000,
   }
 }
 

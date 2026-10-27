@@ -22,6 +22,7 @@ the extracted docs isn't enough.
 | 2026-08-26 | [Publishing + Synology](2026-08-26-publishing-synology.md) | Why the app has zero build-time config; GHCR tags |
 | 2026-08-27 | [NAS sync + export](2026-08-27-nas-sync-export.md) ⚠️ | Tombstones; merge rules; the bind-mount `chown` bug. *Partly superseded* |
 | 2026-08-27 | [Time-tracking rebuild](2026-08-27-time-tracking-rebuild.md) | **The current model.** Why attribution was deleted |
+| 2026-09-02 | [Activities + backfill](2026-09-02-activities-and-backfill.md) | Why portalling wasn't the drag fix; the activity-id decision; `insertEntry` |
 
 ⚠️ = carries a superseded-content warning at the top. Read the warning before trusting the file.
 

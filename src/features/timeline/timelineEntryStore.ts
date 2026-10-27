@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { isActivityId } from '@/features/activities/subject'
 import {
   createTimelineEntry,
   moveEntry,
@@ -93,9 +94,17 @@ export const useTimelineEntryStore = create<TimelineEntryStore>()(
           const target = state.entries.find((e) => e.id === entryId)
           if (!target) return state
           const moved = touch(rescheduleEntry(target, date, startMinutes, durationMinutes))
-          const displaced = state.entries.filter(
-            (e) => e.id !== entryId && e.taskId === moved.taskId && e.date === moved.date,
-          )
+          // One placement per task per date — but NOT per *activity* per date.
+          // "IT support" twice in one day is a real day, and displacing the
+          // first block the moment the second one moves onto the same date
+          // would silently delete a recorded intention. The one-placement rule
+          // exists to keep `entryForTaskOnDate` and the unscheduled rail
+          // coherent, and both of those only ever iterate real tasks.
+          const displaced = isActivityId(moved.taskId)
+            ? []
+            : state.entries.filter(
+                (e) => e.id !== entryId && e.taskId === moved.taskId && e.date === moved.date,
+              )
           return {
             entries: state.entries
               .filter((e) => !displaced.some((d) => d.id === e.id))

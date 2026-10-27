@@ -5,13 +5,17 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { Task } from '@/lib/habitica/types'
 import { addDays, isSameDate, parseDateOnlyString, today, toDateOnlyString } from '@/lib/dateOnly'
+import { combineDateAndTime, minutesToHHMM } from '@/lib/timeOfDay'
 import { useTasks, useTaskLookup } from '@/features/tasks/useTasks'
 import { TaskDetailDialogHost } from '@/features/tasks/TaskDetailDialogHost'
+import type { TimeSubject } from '@/features/activities/subject'
 import { useTagFilterStore } from '@/features/tags/tagFilterStore'
 import { filterTasksByTags } from '@/features/tags/tagFilter'
 import { TagFilterSidebar } from '@/features/tags/TagFilterSidebar'
 import { PomodoroPanel } from '@/features/pomodoro/PomodoroPanel'
 import { PomodoroDayStats } from '@/features/pomodoro/PomodoroDayStats'
+import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
+import { TimeEntryEditor, type TimeEntryDraft } from '@/features/tracking/TimeEntryEditor'
 import { entriesForDate } from './timelineEntries'
 import { useTimelineEntryStore } from './timelineEntryStore'
 import { unscheduledTasks } from './timelineEligibility'
@@ -38,11 +42,27 @@ export function TimelinePage() {
   const viewedDay = parseDateOnlyString(viewDate) ?? today()
   const isToday = isSameDate(viewedDay, today())
 
-  const [popover, setPopover] = React.useState<{ task: Task; x: number; y: number } | null>(null)
+  // The schedule popover targets a *subject* (a task, or an ad-hoc activity)
+  // and optionally an exact placement. `entryId` is what lets an activity with
+  // two blocks on one day have each of them edited separately — for a task,
+  // (subject, date) still resolves the one placement it is allowed.
+  const [popover, setPopover] = React.useState<{
+    subject: Task | TimeSubject
+    entryId?: string
+    x: number
+    y: number
+  } | null>(null)
   // Held as an *id*, not the Task object the click carried: the dialog edits
   // the task (checklist ticks, in-place title/notes edits), and a frozen
   // snapshot would keep rendering the pre-edit copy.
   const [detailTaskId, setDetailTaskId] = React.useState<string | null>(null)
+  // The Actual ribbon opens the interval editor in one of two modes: on an
+  // existing record, or on an empty span to fill. Held here rather than in the
+  // scrubber so the dialog isn't inside the pan/zoom/drag surface.
+  const [editingEntryId, setEditingEntryId] = React.useState<string | null>(null)
+  const [logDraft, setLogDraft] = React.useState<TimeEntryDraft | null>(null)
+  const timeEntries = useTimeEntryStore((s) => s.entries)
+  const editingEntry = timeEntries.find((e) => e.id === editingEntryId)
 
   function setViewDate(date: string) {
     setSearchParams(date === todayStr ? {} : { date }, { replace: true })
@@ -138,7 +158,7 @@ export function TimelinePage() {
             <PomodoroPanel />
             <UnscheduledTaskList
               tasks={unscheduled}
-              onSchedule={(task, anchor) => setPopover({ task, ...anchor })}
+              onSchedule={(subject, anchor) => setPopover({ subject, ...anchor })}
             />
             <div className="border-t border-border pt-4">
               <TagFilterSidebar />
@@ -149,12 +169,24 @@ export function TimelinePage() {
               date={viewDate}
               entries={dayEntries}
               tasksById={tasksById}
-              onOpenSchedule={(task, anchor) => setPopover({ task, ...anchor })}
+              onOpenSchedule={(target, anchor) => setPopover({ ...target, ...anchor })}
               onOpenDetail={(task) => setDetailTaskId(task.id)}
+              onEditEntry={setEditingEntryId}
+              onLogGap={(startMinutes, endMinutes) => {
+                // Minutes-since-midnight back into real instants, against the
+                // day being *viewed* — backfilling yesterday must not land on
+                // today. combineDateAndTime is the same helper the schedule
+                // and interval forms use, so one parsing rule covers all three.
+                const startedAt = combineDateAndTime(viewedDay, minutesToHHMM(startMinutes))
+                const endedAt = combineDateAndTime(viewedDay, minutesToHHMM(endMinutes))
+                if (!startedAt || !endedAt) return
+                setLogDraft({ startedAt: startedAt.toISOString(), endedAt: endedAt.toISOString() })
+              }}
             />
             <p className="mt-2 text-xs text-muted-foreground">
               Click a block to open the task · drag to move · drag its edges to resize · its clock button types exact
-              times · drag empty space to pan · scroll to zoom. Placements live only in this app — habitica.com never
+              times · drag empty space to pan · scroll to zoom. On the recorded strip below, click a band to correct
+              it or a gap to log what you were actually doing. Placements live only in this app — habitica.com never
               sees them.
             </p>
             <PomodoroDayStats date={viewDate} />
@@ -166,7 +198,8 @@ export function TimelinePage() {
         <SchedulePopover
           x={popover.x}
           y={popover.y}
-          task={popover.task}
+          subject={popover.subject}
+          entryId={popover.entryId}
           initialDate={viewDate}
           onClose={() => setPopover(null)}
         />
@@ -176,6 +209,23 @@ export function TimelinePage() {
           contents rather than reusing the first task's form state. */}
       {detailTask && (
         <TaskDetailDialogHost key={detailTask.id} task={detailTask} onClose={() => setDetailTaskId(null)} />
+      )}
+
+      {/* Keyed for the same reason as the detail dialog: clicking a second
+          band must reset the form rather than reuse the first one's state. */}
+      {editingEntry && (
+        <TimeEntryEditor
+          key={editingEntry.id}
+          entry={editingEntry}
+          onClose={() => setEditingEntryId(null)}
+        />
+      )}
+      {logDraft && (
+        <TimeEntryEditor
+          key={logDraft.startedAt}
+          draft={logDraft}
+          onClose={() => setLogDraft(null)}
+        />
       )}
     </div>
   )

@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { randomId } from '@/lib/randomId'
 import { toDateOnlyString } from '@/lib/dateOnly'
-import type { TaskType } from '@/lib/habitica/types'
 import { minutesFromDate } from '@/lib/timeOfDay'
 import { entriesForDate, focusCandidateEntries } from '@/features/timeline/timelineEntries'
 import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
@@ -17,7 +16,7 @@ import {
 } from './pomodoroEngine'
 import { createPhaseRecord, type PomodoroPhaseRecord } from './pomodoroPhases'
 import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
-import { openEntryOf, type TimeEntryTaskRef } from '@/features/tracking/timeEntries'
+import { openEntryOf, type TimeEntry, type TimeEntryTaskRef } from '@/features/tracking/timeEntries'
 
 interface PomodoroStoreState {
   settings: PomodoroSettings
@@ -94,7 +93,10 @@ export function suggestedTaskRef(now: Date, windowMinutes: number): TimeEntryTas
   return null
 }
 
-function refOf(entry: { taskId: string; taskSnapshot: { text: string; type: TaskType; tagIds: string[] } }): TimeEntryTaskRef {
+/** A subject ref rebuilt from an entry's frozen snapshot. `type` is absent for
+ * an ad-hoc activity, and carrying that absence through is correct — an
+ * activity has no Habitica task type to report. */
+function refOf(entry: Pick<TimeEntry, 'taskId' | 'taskSnapshot'>): TimeEntryTaskRef {
   return { id: entry.taskId, text: entry.taskSnapshot.text, type: entry.taskSnapshot.type, tagIds: entry.taskSnapshot.tagIds }
 }
 

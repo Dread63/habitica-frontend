@@ -5,17 +5,32 @@ import { DatePicker } from '@/components/ui/DatePicker'
 import { parseDateOnlyString, today, toDateOnlyString } from '@/lib/dateOnly'
 import { hhmmToEndMinutes, hhmmToMinutes, minutesFromDate, minutesToHHMM, MINUTES_PER_DAY } from '@/lib/timeOfDay'
 import type { Task } from '@/lib/habitica/types'
+import { isActivityId, type TimeSubject } from '@/features/activities/subject'
 import {
   entryForTaskOnDate,
   nextGridStart,
   taskSnapshotOf,
   TIMELINE_DEFAULT_DURATION_MINUTES,
   TIMELINE_MIN_DURATION_MINUTES,
+  type TimelineTaskSnapshot,
 } from './timelineEntries'
 import { useTimelineEntryStore } from './timelineEntryStore'
 
 interface ScheduleFieldsProps {
-  task: Task
+  /**
+   * What is being placed. A `Task` for every existing call site; a
+   * `TimeSubject` where an ad-hoc activity is being scheduled.
+   *
+   * Note the invariant difference this carries: a task has **one placement per
+   * date**, so opening this form for a task resolves the entry it will edit by
+   * (task, date). An activity has no such rule — two IT-support blocks in one
+   * day is a real day — so an activity is always *added*, and an existing
+   * activity block is edited by passing `entryId` instead.
+   */
+  subject: Task | TimeSubject
+  /** Edit exactly this placement, rather than resolving one by (subject, date).
+   * Required to address one of several same-day activity blocks. */
+  entryId?: string
   /** "YYYY-MM-DD"; defaults to today. */
   initialDate?: string
   /** Autofocus + select the start-time input on mount — the popover paths
@@ -64,9 +79,20 @@ function formatSpan(minutes: number): string {
  * placement, Save creates one; Remove clears whichever placement is targeted.
  * All buttons are type="button" (this can render inside the editor's form).
  */
-export function ScheduleFields({ task, initialDate, autoFocusTime, onDone }: ScheduleFieldsProps) {
+export function ScheduleFields({ subject, entryId, initialDate, autoFocusTime, onDone }: ScheduleFieldsProps) {
   const entries = useTimelineEntryStore((s) => s.entries)
   const store = useTimelineEntryStore()
+
+  // A Task and a TimeSubject differ only in how the snapshot is built.
+  const isTask = 'notes' in subject
+  const subjectId = subject.id
+  const snapshot: TimelineTaskSnapshot = isTask
+    ? taskSnapshotOf(subject)
+    : { text: subject.text, type: subject.type, tagIds: subject.tagIds }
+  // Activities get no (subject, date) lookup: they may legitimately appear
+  // twice on one day, so "the placement" only exists when named explicitly.
+  const resolveOnDate = (date: string) =>
+    entryId !== undefined || isActivityId(subjectId) ? undefined : entryForTaskOnDate(entries, subjectId, date)
 
   // The day this form opened on, fixed for its lifetime. The placement being
   // edited is resolved against *this* date, never the draft's — looking it up
@@ -77,10 +103,11 @@ export function ScheduleFields({ task, initialDate, autoFocusTime, onDone }: Sch
   // while the form is open — the editor dialog's inline copy stays mounted
   // for the life of its card.
   const anchorDate = React.useMemo(() => initialDate ?? toDateOnlyString(today()), [initialDate])
-  const anchored = entryForTaskOnDate(entries, task.id, anchorDate)
+  const named = entryId === undefined ? undefined : entries.find((e) => e.id === entryId)
+  const anchored = named ?? resolveOnDate(anchorDate)
 
   const [draft, setDraft] = React.useState(() => {
-    const existing = entryForTaskOnDate(useTimelineEntryStore.getState().entries, task.id, anchorDate)
+    const existing = anchored
     const start = existing?.startMinutes ?? nextGridStart(minutesFromDate(new Date()))
     const duration = existing?.durationMinutes ?? TIMELINE_DEFAULT_DURATION_MINUTES
     return {
@@ -92,7 +119,7 @@ export function ScheduleFields({ task, initialDate, autoFocusTime, onDone }: Sch
 
   // Falling back to a placement already on the *chosen* date keeps the
   // one-per-task-per-date invariant when the form opened without an anchor.
-  const target = anchored ?? entryForTaskOnDate(entries, task.id, draft.date)
+  const target = anchored ?? resolveOnDate(draft.date)
   const movesDay = anchored !== undefined && draft.date !== anchorDate
   const startMinutes = hhmmToMinutes(draft.start)
   const endMinutes = hhmmToEndMinutes(draft.end)
@@ -108,7 +135,7 @@ export function ScheduleFields({ task, initialDate, autoFocusTime, onDone }: Sch
     if (target) {
       store.rescheduleEntry(target.id, draft.date, startMinutes, durationMinutes)
     } else {
-      store.addEntry(task.id, draft.date, startMinutes, durationMinutes, taskSnapshotOf(task))
+      store.addEntry(subjectId, draft.date, startMinutes, durationMinutes, snapshot)
     }
     onDone?.()
   }

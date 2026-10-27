@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { CalendarGrid } from '@/components/ui/DatePicker'
 import { cn } from '@/lib/utils'
 import { addDays, toApiDateTime, today } from '@/lib/dateOnly'
+import { useDragGuard } from '@/lib/dnd/useDragGuard'
 import type { TodoTask } from '@/lib/habitica/types'
 import { TaskCard } from './TaskCard'
 import { TaskEditorDialog, type TaskEditorHandle } from './TaskEditorDialog'
@@ -202,19 +203,13 @@ export function TodoBoard({
               ) : (
                 <div className="flex flex-col gap-3">
                   {buckets[bucket].map((task) => (
-                    <div
+                    <DraggableTaskCard
                       key={task.id}
-                      draggable
-                      onDragStart={(event) => {
-                        setDraggingTaskId(task.id)
-                        event.dataTransfer.setData('text/plain', task.id)
-                        event.dataTransfer.effectAllowed = 'move'
-                      }}
-                      onDragEnd={() => setDraggingTaskId(null)}
-                      className={cn('cursor-grab active:cursor-grabbing', draggingTaskId === task.id && 'opacity-40')}
-                    >
-                      <TaskCard task={task} tagNamesById={tagNamesById} />
-                    </div>
+                      task={task}
+                      tagNamesById={tagNamesById}
+                      isDragging={draggingTaskId === task.id}
+                      onDragStateChange={setDraggingTaskId}
+                    />
                   ))}
                 </div>
               )}
@@ -250,6 +245,44 @@ export function TodoBoard({
 
       <TaskEditorDialog ref={createDialogRef} mode="create" type="todo" />
     </section>
+  )
+}
+
+/**
+ * One draggable card in a bucket column.
+ *
+ * A component rather than an inline `<div>` because `useDragGuard` is a hook
+ * and this renders in a loop. The guard is what lets you click into the card's
+ * notes editor and subtask input at all: without it the enclosing `draggable`
+ * swallows the press and starts a card drag instead. See lib/dnd/dragGuard.ts.
+ */
+function DraggableTaskCard({
+  task,
+  tagNamesById,
+  isDragging,
+  onDragStateChange,
+}: {
+  task: TodoTask
+  tagNamesById: ReadonlyMap<string, string>
+  isDragging: boolean
+  onDragStateChange: (taskId: string | null) => void
+}) {
+  const drag = useDragGuard()
+
+  return (
+    <div
+      draggable={drag.draggable}
+      onPointerDownCapture={drag.onPointerDownCapture}
+      onDragStart={drag.guardDragStart((event) => {
+        onDragStateChange(task.id)
+        event.dataTransfer.setData('text/plain', task.id)
+        event.dataTransfer.effectAllowed = 'move'
+      })}
+      onDragEnd={() => onDragStateChange(null)}
+      className={cn('cursor-grab active:cursor-grabbing', isDragging && 'opacity-40')}
+    >
+      <TaskCard task={task} tagNamesById={tagNamesById} />
+    </div>
   )
 }
 

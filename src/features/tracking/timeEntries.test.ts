@@ -8,14 +8,17 @@ import {
   entryDurationMs,
   findOverlaps,
   handleTaskDeleted,
+  insertEntry,
   isOpen,
   MIN_ENTRY_MS,
   openEntryOf,
   splitEntry,
   startTracking,
   stopTracking,
+  timeEntryToDayBand,
   totalDurationMs,
   wasEdited,
+  type TimeEntry,
   type TimeEntryState,
   type TimeEntryTaskRef,
 } from './timeEntries'
@@ -307,3 +310,250 @@ describe('findOverlaps', () => {
     expect(findOverlaps(state.entries, at(9, 30))).toEqual([])
   })
 })
+
+describe('timeEntryToDayBand', () => {
+  const NOW = at(18)
+  const band = (startH: number, startM: number, endH: number, endM: number): TimeEntry => ({
+    id: 'band',
+    taskId: 'a',
+    startedAt: at(startH, startM).toISOString(),
+    endedAt: at(endH, endM).toISOString(),
+    taskSnapshot: { text: 'Task a', type: 'todo', tagIds: [] },
+    source: 'manual',
+    createdAt: at(startH, startM).toISOString(),
+    updatedAt: 0,
+  })
+
+  it('maps an interval to minutes since local midnight', () => {
+    expect(timeEntryToDayBand(band(9, 30, 10, 15), DATE, NOW)).toEqual({
+      startMinutes: 570,
+      endMinutes: 615,
+    })
+  })
+
+  it('clips an entry crossing midnight to the day being drawn', () => {
+    const crossing: TimeEntry = {
+      ...band(23, 50, 23, 59),
+      endedAt: new Date(2026, 7, 28, 0, 20).toISOString(),
+    }
+    expect(timeEntryToDayBand(crossing, DATE, NOW)).toEqual({ startMinutes: 1430, endMinutes: 1440 })
+    expect(timeEntryToDayBand(crossing, '2026-08-28', NOW)).toEqual({ startMinutes: 0, endMinutes: 20 })
+  })
+
+  it('returns null for a day the entry does not touch', () => {
+    expect(timeEntryToDayBand(band(9, 0, 10, 0), '2026-08-25', NOW)).toBeNull()
+  })
+
+  it('returns null for an unparseable date rather than guessing', () => {
+    expect(timeEntryToDayBand(band(9, 0, 10, 0), 'not-a-date', NOW)).toBeNull()
+  })
+})
+
+describe('insertEntry', () => {
+  const NOW = at(18)
+  const SUBJECT = { id: 'activity:it support', text: 'IT support', tagIds: ['tag-1'] }
+
+  /** A closed entry from h:m to h:m on the fixture day. */
+  function closed(id: string, taskId: string, fromH: number, fromM: number, toH: number, toM: number): TimeEntry {
+    return {
+      id,
+      taskId,
+      startedAt: at(fromH, fromM).toISOString(),
+      endedAt: at(toH, toM).toISOString(),
+      taskSnapshot: { text: `Task ${taskId}`, type: 'todo', tagIds: [] },
+      source: 'manual',
+      createdAt: at(fromH, fromM).toISOString(),
+      updatedAt: 0,
+    }
+  }
+
+  const stateOf = (...entries: TimeEntry[]): TimeEntryState => ({ entries, tombstones: {} })
+  const span = (e: TimeEntry) => [e.startedAt, e.endedAt] as const
+  const byId = (s: TimeEntryState, id: string) => s.entries.find((e) => e.id === id)
+  const inserted = (s: TimeEntryState) => s.entries.find((e) => e.taskId === SUBJECT.id)!
+  const insert = (state: TimeEntryState, fromH: number, fromM: number, toH: number, toM: number, ids = ['new']) =>
+    insertEntry(
+      state,
+      { subject: SUBJECT, startedAt: at(fromH, fromM).toISOString(), endedAt: at(toH, toM).toISOString() },
+      NOW,
+      ids,
+    )
+
+  it('appends when nothing overlaps', () => {
+    const before = stateOf(closed('e1', 'a', 9, 0, 10, 0))
+    const after = insert(before, 11, 0, 11, 30)
+
+    expect(after.entries).toHaveLength(2)
+    expect(byId(after, 'e1')).toEqual(before.entries[0])
+    expect(span(inserted(after))).toEqual([at(11, 0).toISOString(), at(11, 30).toISOString()])
+    expect(findOverlaps(after.entries, NOW)).toEqual([])
+  })
+
+  it('treats a merely touching interval as no overlap', () => {
+    // Half-open intervals: 10:00-11:00 does not overlap 09:00-10:00.
+    const after = insert(stateOf(closed('e1', 'a', 9, 0, 10, 0)), 10, 0, 11, 0)
+    expect(byId(after, 'e1')!.endedAt).toBe(at(10, 0).toISOString())
+    expect(findOverlaps(after.entries, NOW)).toEqual([])
+  })
+
+  it('trims the end of an entry it overlaps at the tail', () => {
+    const after = insert(stateOf(closed('e1', 'a', 9, 0, 10, 0)), 9, 40, 10, 30)
+
+    expect(after.entries).toHaveLength(2)
+    expect(span(byId(after, 'e1')!)).toEqual([at(9, 0).toISOString(), at(9, 40).toISOString()])
+    expect(findOverlaps(after.entries, NOW)).toEqual([])
+  })
+
+  it('advances the start of an entry it overlaps at the head', () => {
+    const after = insert(stateOf(closed('e1', 'a', 9, 0, 10, 0)), 8, 30, 9, 20)
+
+    expect(after.entries).toHaveLength(2)
+    expect(span(byId(after, 'e1')!)).toEqual([at(9, 20).toISOString(), at(10, 0).toISOString()])
+    expect(findOverlaps(after.entries, NOW)).toEqual([])
+  })
+
+  it('splits an entry it lands strictly inside, keeping the id on the head', () => {
+    // The reported scenario: two hours logged on the report, forty minutes of
+    // which were actually IT support.
+    const after = insert(stateOf(closed('e1', 'a', 9, 0, 11, 0)), 9, 40, 10, 20)
+
+    expect(after.entries).toHaveLength(3)
+    expect(span(byId(after, 'e1')!)).toEqual([at(9, 0).toISOString(), at(9, 40).toISOString()])
+    const tail = byId(after, 'new')!
+    expect(span(tail)).toEqual([at(10, 20).toISOString(), at(11, 0).toISOString()])
+    expect(tail.splitFromId).toBe('e1')
+    expect(tail.taskId).toBe('a')
+    expect(findOverlaps(after.entries, NOW)).toEqual([])
+  })
+
+  it('conserves total duration across a split, minus the inserted span', () => {
+    const before = stateOf(closed('e1', 'a', 9, 0, 11, 0))
+    const after = insert(before, 9, 40, 10, 20)
+
+    expect(totalDurationMs(after.entries, NOW)).toBe(totalDurationMs(before.entries, NOW))
+  })
+
+  it('retargets in place when the span matches exactly, keeping the id and the audit', () => {
+    const after = insert(stateOf(closed('e1', 'a', 9, 0, 10, 0)), 9, 0, 10, 0)
+
+    expect(after.entries).toHaveLength(1)
+    const entry = byId(after, 'e1')!
+    expect(entry.taskId).toBe(SUBJECT.id)
+    expect(entry.taskSnapshot).toEqual({ text: 'IT support', type: undefined, tagIds: ['tag-1'] })
+    expect(entry.audit?.original.taskId).toBe('a')
+    expect(entry.audit?.editCount).toBe(1)
+  })
+
+  it('deletes an entry it fully covers, leaving a tombstone', () => {
+    const after = insert(stateOf(closed('e1', 'a', 9, 30, 9, 45)), 9, 0, 10, 0)
+
+    expect(byId(after, 'e1')).toBeUndefined()
+    expect(after.tombstones).toHaveProperty('e1')
+    expect(after.entries).toHaveLength(1)
+  })
+
+  it('spans several entries: trims the outer two and deletes the covered middle', () => {
+    const before = stateOf(
+      closed('e1', 'a', 9, 0, 10, 0),
+      closed('e2', 'b', 10, 0, 10, 30),
+      closed('e3', 'c', 10, 30, 11, 30),
+    )
+    const after = insert(before, 9, 30, 11, 0)
+
+    expect(span(byId(after, 'e1')!)).toEqual([at(9, 0).toISOString(), at(9, 30).toISOString()])
+    expect(byId(after, 'e2')).toBeUndefined()
+    expect(after.tombstones).toHaveProperty('e2')
+    expect(span(byId(after, 'e3')!)).toEqual([at(11, 0).toISOString(), at(11, 30).toISOString()])
+    expect(findOverlaps(after.entries, NOW)).toEqual([])
+  })
+
+  it('drops a remnant shorter than MIN_ENTRY_MS rather than recording it', () => {
+    // 09:00-10:00 with an insert at 09:00:02 would leave a two-second head.
+    const before = stateOf(closed('e1', 'a', 9, 0, 10, 0))
+    const after = insertEntry(
+      before,
+      { subject: SUBJECT, startedAt: at(9, 0, 2).toISOString(), endedAt: at(9, 30).toISOString() },
+      NOW,
+      ['new'],
+    )
+
+    // The entry survives as its tail, keeping its identity.
+    expect(span(byId(after, 'e1')!)).toEqual([at(9, 30).toISOString(), at(10, 0).toISOString()])
+    expect(after.entries).toHaveLength(2)
+    expect(findOverlaps(after.entries, NOW)).toEqual([])
+  })
+
+  it('carves the open entry and leaves the piece that still runs to now open', () => {
+    const open: TimeEntry = { ...closed('e1', 'a', 9, 0, 10, 0), endedAt: null }
+    const after = insertEntry(
+      { entries: [open], tombstones: {} },
+      { subject: SUBJECT, startedAt: at(9, 40).toISOString(), endedAt: at(10, 20).toISOString() },
+      NOW,
+      ['new'],
+    )
+
+    expect(byId(after, 'e1')!.endedAt).toBe(at(9, 40).toISOString())
+    const tail = byId(after, 'new')!
+    expect(tail.startedAt).toBe(at(10, 20).toISOString())
+    // Exactly one open entry survives — the invariant the whole ledger rests on.
+    expect(after.entries.filter(isOpen)).toHaveLength(1)
+    expect(openEntryOf(after.entries)!.id).toBe('new')
+  })
+
+  it('leaves nothing open when the insert covers the open entry entirely', () => {
+    const open: TimeEntry = { ...closed('e1', 'a', 17, 0, 18, 0), endedAt: null }
+    const after = insertEntry(
+      { entries: [open], tombstones: {} },
+      { subject: SUBJECT, startedAt: at(16, 0).toISOString(), endedAt: at(18, 0).toISOString() },
+      NOW,
+      ['new'],
+    )
+
+    expect(after.entries.filter(isOpen)).toHaveLength(0)
+    expect(after.tombstones).toHaveProperty('e1')
+  })
+
+  it('records an interval that crosses midnight without splitting it', () => {
+    const after = insertEntry(
+      { entries: [], tombstones: {} },
+      {
+        subject: SUBJECT,
+        startedAt: at(23, 40).toISOString(),
+        endedAt: new Date(2026, 7, 28, 0, 20).toISOString(),
+      },
+      NOW,
+      ['new'],
+    )
+
+    expect(after.entries).toHaveLength(1)
+    expect(entriesOverlappingDay(after.entries, DATE, NOW)).toHaveLength(1)
+    expect(entriesOverlappingDay(after.entries, '2026-08-28', NOW)).toHaveLength(1)
+  })
+
+  it('marks the new entry as backfilled rather than recorded live', () => {
+    const after = insert(stateOf(), 11, 0, 11, 30)
+    expect(inserted(after).source).toBe('backfill')
+    expect(inserted(after).closedBy).toBe('user')
+    // Not an edit — nothing was misstated, this interval simply never existed.
+    expect(inserted(after).audit).toBeUndefined()
+  })
+
+  it('refuses a span that is backwards, zero-length, or unparseable', () => {
+    const before = stateOf(closed('e1', 'a', 9, 0, 10, 0))
+    expect(insert(before, 10, 0, 9, 0)).toBe(before)
+    expect(insert(before, 9, 30, 9, 30)).toBe(before)
+    expect(
+      insertEntry(before, { subject: SUBJECT, startedAt: 'nonsense', endedAt: 'also nonsense' }, NOW),
+    ).toBe(before)
+  })
+
+  it('mints a real id when none is injected', () => {
+    const after = insertEntry(
+      stateOf(),
+      { subject: SUBJECT, startedAt: at(11).toISOString(), endedAt: at(12).toISOString() },
+      NOW,
+    )
+    expect(after.entries[0].id).toMatch(/^[0-9a-f-]{36}$/)
+  })
+})
+

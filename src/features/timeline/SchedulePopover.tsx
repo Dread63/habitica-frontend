@@ -1,5 +1,6 @@
 import * as React from 'react'
 import type { Task } from '@/lib/habitica/types'
+import type { TimeSubject } from '@/features/activities/subject'
 import { ScheduleFields } from './ScheduleFields'
 
 const POPOVER_WIDTH = 288 // w-72
@@ -8,7 +9,10 @@ const POPOVER_HEIGHT = 220 // estimate for clamping; the date picker's calendar 
 interface SchedulePopoverProps {
   x: number
   y: number
-  task: Task
+  /** A task, or an ad-hoc activity being planned onto the day. */
+  subject: Task | TimeSubject
+  /** Edit exactly this placement — see ScheduleFields. */
+  entryId?: string
   initialDate?: string
   onClose: () => void
 }
@@ -20,7 +24,7 @@ interface SchedulePopoverProps {
  * pointerdown or Escape. Deliberately not a shared components/ui primitive;
  * each floating UI in this codebase hand-rolls this small chrome per site.
  */
-export function SchedulePopover({ x, y, task, initialDate, onClose }: SchedulePopoverProps) {
+export function SchedulePopover({ x, y, subject, entryId, initialDate, onClose }: SchedulePopoverProps) {
   const ref = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
@@ -47,10 +51,10 @@ export function SchedulePopover({ x, y, task, initialDate, onClose }: SchedulePo
       className="fixed z-30 w-72 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-lg"
       style={{ left, top }}
     >
-      <p className="mb-2 truncate text-xs font-medium text-muted-foreground" title={task.text}>
-        {task.text}
+      <p className="mb-2 truncate text-xs font-medium text-muted-foreground" title={subject.text}>
+        {subject.text}
       </p>
-      <ScheduleFields task={task} initialDate={initialDate} autoFocusTime onDone={onClose} />
+      <ScheduleFields subject={subject} entryId={entryId} initialDate={initialDate} autoFocusTime onDone={onClose} />
     </div>
   )
 }

@@ -58,3 +58,43 @@ describe('rescheduleEntry (store)', () => {
     expect(useTimelineEntryStore.getState().entries).toBe(before)
   })
 })
+
+describe('rescheduleEntry (store) — activities', () => {
+  beforeEach(() => useTimelineEntryStore.setState({ entries: [], tombstones: {} }))
+
+  const entriesFor = (taskId: string) =>
+    useTimelineEntryStore.getState().entries.filter((e) => e.taskId === taskId)
+
+  it('keeps a second placement of the same ACTIVITY on one day', () => {
+    // Two IT-support interruptions in one day is a real day. The
+    // one-placement-per-task-per-date rule must not eat the first one.
+    const store = useTimelineEntryStore.getState()
+    store.addEntry('activity:it support', '2026-08-25', 9 * 60, 30)
+    store.addEntry('activity:it support', '2026-08-26', 14 * 60, 30)
+    const second = entriesFor('activity:it support').find((e) => e.date === '2026-08-26')!
+
+    store.rescheduleEntry(second.id, '2026-08-25', 15 * 60, 30)
+
+    const onTheDay = entriesFor('activity:it support').filter((e) => e.date === '2026-08-25')
+    expect(onTheDay).toHaveLength(2)
+    expect(onTheDay.map((e) => e.startMinutes).sort((a, b) => a - b)).toEqual([9 * 60, 15 * 60])
+    expect(useTimelineEntryStore.getState().tombstones).toEqual({})
+  })
+
+  it('still displaces a second placement of the same TASK on one day', () => {
+    const store = useTimelineEntryStore.getState()
+    store.addEntry('t1', '2026-08-25', 9 * 60, 30)
+    store.addEntry('t1', '2026-08-26', 14 * 60, 30)
+    const second = entriesFor('t1').find((e) => e.date === '2026-08-26')!
+
+    store.rescheduleEntry(second.id, '2026-08-25', 15 * 60, 30)
+
+    const onTheDay = entriesFor('t1').filter((e) => e.date === '2026-08-25')
+    expect(onTheDay).toHaveLength(1)
+    expect(onTheDay[0].startMinutes).toBe(15 * 60)
+    // The displaced placement leaves a tombstone, or an offline device would
+    // push its live copy back and resurrect it.
+    expect(Object.keys(useTimelineEntryStore.getState().tombstones)).toHaveLength(1)
+  })
+})
+

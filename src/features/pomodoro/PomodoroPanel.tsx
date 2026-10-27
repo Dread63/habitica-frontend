@@ -1,14 +1,14 @@
 import * as React from 'react'
 import { Circle, Pause, Play, Square, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Select } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { emojify } from '@/lib/emoji'
 import { useTwemoji } from '@/lib/useTwemoji'
 import { useNowTick } from '@/lib/useNowTick'
 import { useTasks } from '@/features/tasks/useTasks'
 import { isSchedulableTaskType } from '@/features/tasks/taskType'
-import { openEntryOf, entryDurationMs, taskRefOf } from '@/features/tracking/timeEntries'
+import { SubjectPicker } from '@/features/activities/SubjectPicker'
+import { openEntryOf, entryDurationMs } from '@/features/tracking/timeEntries'
 import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
 import { formatDuration } from '@/features/tracking/trackingStats'
 import { phaseDurationMinutes, remainingMs, type PomodoroPhase } from './pomodoroEngine'
@@ -99,11 +99,6 @@ export function PomodoroPanel() {
   const ringColor = isIdle ? 'var(--primary)' : PHASE_COLORS[run.phase]
   const seam = isAwaiting ? phaseSeamMessage(finishedPhaseOf(run.phase), run.phase) : null
 
-  function handleSelectTask(taskId: string) {
-    const task = focusableTasks.find((t) => t.id === taskId)
-    if (task) startTracking(taskRefOf(task))
-  }
-
   return (
     <section className="flex flex-col items-center gap-3 rounded-lg border border-border bg-card p-4">
       <div className="relative">
@@ -188,23 +183,20 @@ export function PomodoroPanel() {
         )}
       </div>
 
-      <Select
-        aria-label={open ? 'Switch to another task' : 'Start tracking a task'}
-        value=""
-        onChange={(e) => {
-          if (e.target.value) handleSelectTask(e.target.value)
-        }}
-        className="h-8 text-xs"
-      >
-        <option value="">{open ? 'Switch task…' : 'Start tracking…'}</option>
-        {focusableTasks
-          .filter((t) => t.id !== open?.taskId)
-          .map((t) => (
-            <option key={t.id} value={t.id}>
-              {emojify(t.text)}
-            </option>
-          ))}
-      </Select>
+      {/* Was a native <select> listing every focusable task, unsearchable and
+          unable to name anything that wasn't a task. The picker searches the
+          same way the Dashboard does and can point the clock at an ad-hoc
+          activity, which is what makes an interruption trackable as it happens
+          rather than only backfillable afterwards. */}
+      <div className="w-full">
+        <SubjectPicker
+          value={null}
+          onChange={(subject) => startTracking(subject)}
+          tasks={focusableTasks.filter((t) => t.id !== open?.taskId)}
+          placeholder={open ? 'Switch to…' : 'Start tracking…'}
+          emptyLabel="No task matches — type a name to track it as an activity."
+        />
+      </div>
 
       <div className="flex items-center gap-2">
         {isIdle ? (

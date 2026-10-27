@@ -89,6 +89,34 @@ If you're reading a commit message or a stale mental model mentioning `anyOf`/`a
 or `cycleTagInFilter`, it's describing a design that no longer exists. `tagFilter.ts` is the
 source of truth.
 
+## Ad-hoc activities ride in the existing id field
+
+Added 2026-09-02. Time can now be recorded against something that isn't a Habitica task. The
+alternative designs, and why this one:
+
+| Option | Why not |
+|---|---|
+| `taskId: string \| null` plus a `label` field | Every reader of `taskId` has to be audited and most would need a null branch, for no gain — the id is used as an opaque grouping key nearly everywhere |
+| A discriminated `subject` union on both records | Cleanest on paper; touches every consumer, and needs a `persist` version bump on two stores plus a migration of every record the user has |
+| **A namespaced id in the existing field** | Chosen |
+
+`activity:<normalised label>` in the existing `taskId`. Consumers that group by the id are
+untouched; consumers that resolve it to a live `Task` already fall back to the entry's
+`taskSnapshot`, because completing a to-do drops it from `GET /tasks/user` — an activity id simply
+never resolves, which is a path that was already load-bearing and already tested. No persisted
+field changed shape, so **no store version bump and no server change** (the api service stores
+opaque payloads and its record kinds are fixed).
+
+The cost, stated rather than hidden: `taskId` now means "subject id", and that mismatch is paid
+for by a comment on the type rather than by a migration.
+
+**The activity list is derived, not stored.** `recentActivities()` scans the ledger and the plan
+for distinct activity ids. A registry would have meant a fourth persisted store, a fifth sync
+record kind, an `api/` table, and definitions that can drift out of step with the entries
+referencing them. The trade is that **renaming an activity isn't possible** — a different label is
+a different subject. If renaming ever becomes wanted, that is the decision to reopen, and it's the
+registry that comes back with it.
+
 ## Layout
 
 To-Dos is the only list long enough to earn the wide main area, so it's the only top-level

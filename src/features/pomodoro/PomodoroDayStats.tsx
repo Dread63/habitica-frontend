@@ -17,8 +17,6 @@ import {
 import { entriesOverlappingDay, openEntryOf } from '@/features/tracking/timeEntries'
 import { useTimeEntryStore } from '@/features/tracking/timeEntryStore'
 import { useNowTick } from '@/lib/useNowTick'
-import { comparePlanToActual } from '@/features/tracking/planVsActual'
-import { useTimelineEntryStore } from '@/features/timeline/timelineEntryStore'
 import { categoryFill } from './pomodoroCategories'
 import { completedPomodoros, phaseActualMs, workPhases } from './pomodoroPhases'
 import { usePomodoroStore } from './pomodoroStore'
@@ -134,17 +132,6 @@ export function PomodoroDayStats({ date }: { date: string }) {
   const trendTotal = trend.reduce((sum, d) => sum + d.totalMs, 0)
   const hoveredTrendDay = trend.find((d) => d.date === hoveredDay)
 
-  // Planned vs recorded. Only meaningful now that the two are genuinely
-  // separate records — under the old model the plan *was* the evidence.
-  const planEntries = useTimelineEntryStore((s) => s.entries)
-  const comparison = React.useMemo(
-    () => comparePlanToActual(planEntries, entries, date, now),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [planEntries, entries, date, trackedMs],
-  )
-  const adherence =
-    comparison.trackedMs === 0 ? null : Math.round((comparison.adherentMs / comparison.trackedMs) * 100)
-
   const tasks = topTasks(dayEntries, TOP_TASK_LIMIT, now)
   const otherTaskCount = Math.max(0, distinctTaskCount(dayEntries) - tasks.length)
   const liveTaskId = openEntryOf(entries)?.taskId ?? null
@@ -188,43 +175,6 @@ export function PomodoroDayStats({ date }: { date: string }) {
         different questions and will rarely match exactly — time worked past the bell counts, an ignored break
         doesn't.
       </p>
-
-      {comparison.plannedMs > 0 && (
-        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4">
-          <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-            Planned vs tracked
-          </h3>
-          <p className="text-sm">
-            Planned <span className="font-medium">{formatDuration(comparison.plannedMs)}</span> · tracked{' '}
-            <span className="font-medium">{formatDuration(comparison.trackedMs)}</span>
-            {adherence !== null && (
-              <>
-                {' '}
-                · <span className="font-medium">{adherence}%</span> of tracked time went to what you'd planned
-                for that moment
-              </>
-            )}
-          </p>
-          <ul className="flex flex-col gap-1">
-            {comparison.rows.slice(0, 5).map((row) => (
-              <li key={row.taskId} className="flex items-center gap-2 text-xs">
-                <span className="min-w-0 flex-1 truncate">{row.text}</span>
-                <span className="shrink-0 text-muted-foreground tabular-nums">
-                  planned {formatDuration(row.plannedMs)} · tracked {formatDuration(row.actualMs)}
-                </span>
-                <span
-                  className={cn(
-                    'w-16 shrink-0 text-right tabular-nums',
-                    row.deltaMs > 0 ? 'text-primary' : row.deltaMs < 0 ? 'text-muted-foreground' : 'text-muted-foreground/60',
-                  )}
-                >
-                  {row.deltaMs === 0 ? '—' : `${row.deltaMs > 0 ? '+' : '−'}${formatDuration(Math.abs(row.deltaMs))}`}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* Category totals for the viewed day. */}

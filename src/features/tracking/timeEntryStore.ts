@@ -5,6 +5,7 @@ import {
   deleteEntry,
   editEntry,
   handleTaskDeleted,
+  insertEntry,
   splitEntry,
   startTracking,
   stopTracking,
@@ -14,6 +15,7 @@ import {
   type TimeEntryState,
   type TimeEntryTaskRef,
 } from './timeEntries'
+import type { TimeSubject } from '@/features/activities/subject'
 
 interface TimeEntryStore extends TimeEntryState {
   /** Open an interval, closing any current one at the same instant. The only
@@ -25,6 +27,9 @@ interface TimeEntryStore extends TimeEntryState {
   stopAt: (at: Date, closedBy: TimeEntryClosedBy) => void
   edit: (entryId: string, edit: TimeEntryEdit) => void
   split: (entryId: string, at: Date) => void
+  /** Backfill: record `subject` over a span, carving room out of whatever was
+   * already there. See insertEntry for exactly what it does to a neighbour. */
+  insert: (subject: TimeSubject, startedAt: string, endedAt: string) => void
   remove: (entryId: string) => void
   /** Task deleted — stops the pointer, KEEPS the history. Deliberately not a
    * cascade; see handleTaskDeleted. */
@@ -83,6 +88,9 @@ export const useTimeEntryStore = create<TimeEntryStore>()(
       edit: (entryId, edit) => set((state) => editEntry(state, entryId, edit, new Date())),
 
       split: (entryId, at) => set((state) => splitEntry(state, entryId, at, new Date())),
+
+      insert: (subject, startedAt, endedAt) =>
+        set((state) => insertEntry(state, { subject, startedAt, endedAt }, new Date())),
 
       remove: (entryId) => set((state) => deleteEntry(state, entryId, new Date())),
 

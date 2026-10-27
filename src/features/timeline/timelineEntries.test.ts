@@ -290,3 +290,31 @@ describe('rescheduleEntry', () => {
     expect(rescheduleEntry(entry(), '2026-08-26', -30, 1).startMinutes).toBe(0)
   })
 })
+
+describe('syncTaskSnapshots — activities', () => {
+  it('leaves an activity entry untouched', () => {
+    // An activity id can never appear in the live task map, so the lookup
+    // misses and the entry keeps the snapshot it was created with. Correct by
+    // construction — asserted because it looks accidental.
+    const entry = createTimelineEntry(
+      {
+        taskId: 'activity:it support',
+        date: '2026-08-27',
+        startMinutes: 9 * 60,
+        durationMinutes: 30,
+        taskSnapshot: { text: 'IT support', tagIds: ['tag-1'] },
+      },
+      'e1',
+      '2026-08-27T00:00:00.000Z',
+      0,
+    )
+    const snapshots = new Map([['t1', { text: 'A task', type: 'todo' as const, tagIds: [] }]])
+
+    const list = [entry]
+    // Same array reference back: nothing changed, so this can run from an
+    // effect on every tasks-query settle without notifying subscribers.
+    expect(syncTaskSnapshots(list, snapshots)).toBe(list)
+    expect(list[0].taskSnapshot).toEqual({ text: 'IT support', tagIds: ['tag-1'] })
+  })
+})
+

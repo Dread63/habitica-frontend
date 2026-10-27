@@ -316,7 +316,7 @@ export const TaskEditorDialog = React.forwardRef<TaskEditorHandle, TaskEditorDia
               exists in edit mode since a not-yet-created task has no id. */}
           {props.mode === 'edit' && isSchedulableTaskType(type) && (
             <Field label="Timeline (this app only)">
-              <ScheduleFields task={props.task} />
+              <ScheduleFields subject={props.task} />
             </Field>
           )}
 

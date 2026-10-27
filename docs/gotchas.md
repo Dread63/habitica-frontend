@@ -156,6 +156,42 @@ not a contrast problem.
 **Task cards are keyed by `task.id`** so the mount animation plays only for genuinely new tasks,
 not for reorders from search or filtering.
 
+**A native `draggable` ancestor swallows every interactive control beneath it.** HTML5 drag
+resolves its source by walking up the **DOM tree**, so a mousedown that should place a caret in a
+textarea starts a card drag instead. This is why the notes editor inside a to-do card could not be
+clicked into at all, and it hit the card's "Add subtask" input the same way. **Portalling the
+editor is not the fix** — `TaskCard`'s dialog is a native `<dialog>` opened with `showModal()`, so
+it is already in the top layer *for painting* while remaining a DOM descendant, and the controls
+that aren't in a dialog wouldn't be helped anyway. Every native drag source spreads
+`useDragGuard()`, which clears `draggable` for the duration of a press that landed on something
+interactive *inside* the source. Note "inside": the unscheduled rail's drag source is itself a
+`<button>`, so a boundary-less version of the check would suppress the drag it exists to protect.
+→ `src/lib/dnd/dragGuard.ts`, `useDragGuard.ts`
+
+---
+
+## Subjects: tasks and activities
+
+**`TimeEntry.taskId` and `TimelineEntry.taskId` are *subject* ids, not necessarily Habitica task
+ids.** An ad-hoc activity — "IT support", the interruption that was never going to be a to-do —
+is stored as `activity:<normalised label>` in that same field. Treat the id as opaque unless you
+are specifically resolving a live `Task`, and check `isActivityId()` when you are.
+→ `src/features/activities/subject.ts`
+
+**The id is derived from the label, so a different label is a different subject.** That is what
+makes two entries a week apart aggregate into one row with no new aggregation code, and it is why
+**renaming an activity is not a thing**. Accepted deliberately: the alternative is an activity
+registry to keep in sync, a persisted store, and a new sync record kind.
+
+**There is no activity store. The list is derived from the entries that mention one.**
+`recentActivities()` scans the ledger and the plan. Don't add a store "for tidiness" — nothing to
+migrate and nothing to sync is the feature, not an omission.
+
+**One placement per task per date does NOT apply to activities.** Two IT-support blocks in one day
+is a real day. `timelineEntryStore.rescheduleEntry` skips its displacement step for activity ids,
+and `ScheduleFields` addresses an activity's placement by `entryId` rather than by (subject, date).
+Getting this wrong silently deletes a block the user never touched.
+
 ---
 
 ## Time tracking

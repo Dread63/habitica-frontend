@@ -57,6 +57,10 @@ These are in this always-loaded file because getting one wrong breaks the app or
   Always ship a migration, even an identity one.
 - **Time is recorded, never inferred.** The plan (timeline blocks) is never evidence of what was
   worked on. Never re-fuse the three time records.
+- **`taskId` on a `TimeEntry`/`TimelineEntry` is a *subject* id**, not always a Habitica task id —
+  an ad-hoc activity is `activity:<label>`. Check `isActivityId()` before resolving one as a task.
+- **Never put a bare `draggable` on anything containing an input.** Native drag resolves by DOM
+  ancestry and swallows the caret. Spread `useDragGuard()` (`src/lib/dnd/`).
 - **Never fetch `apidoc.habitica.com`** — it's a client-rendered SPA that returns `"Loading..."`
   to every non-browser tool. Everything needed is vendored in `docs/`.
 
@@ -87,12 +91,14 @@ project — anything about rendered behaviour is reasoned, not observed.
 ```
 src/lib/habitica/     client.ts (the ONLY fetch to habitica.com), rateLimiter, auth, types
 src/lib/              dateOnly.ts (local calendar + toApiDateTime), timeOfDay.ts, emoji,
+                      dnd/dragGuard.ts (nested inputs vs. native drag),
                       useTwemoji, sync/mergeState.ts (mergeVersioned — exists exactly once)
 src/features/tasks/   Dashboard, TodoBoard, TaskCard, quickAdd, taskSearch, todoBuckets,
                       taskColor (aging scale), taskType (per-type identity), useTasks
 src/features/tags/    tagFilter (the feature this project exists for), tagFilterStore
+src/features/activities/  subject.ts (task-or-activity id rules), recentActivities, SubjectPicker
 src/features/timeline/  TimelineScrubber, timelineEntries, timelineLanes, ScheduleFields
-src/features/tracking/  timeEntries (the ledger), reconciliation, planVsActual
+src/features/tracking/  timeEntries (the ledger + insertEntry), reconciliation
 src/features/pomodoro/  pomodoroEngine (timestamp-anchor clock), pomodoroPhases (append-only)
 src/features/auth|theme/  AuthProvider, ThemeProvider, DensityProvider
 src/components/ui/    hand-authored shadcn-style primitives; dialog.tsx is a native <dialog>
